@@ -33,7 +33,16 @@ class IPTVClient:
         self.password = password
         self.api_url = f"{self.base_url}/player_api.php"
         self._session = requests.Session()
-        self._session.headers.update({"User-Agent": "IPTV-VOD-Downloader/1.0"})
+        self._session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/118.0.5993.70 Safari/537.36"
+                ),
+                "Accept": "application/json, text/plain, */*",
+            }
+        )
         self.timeout = (5, 60)
 
     def _request(self, **params: Any) -> Any:
