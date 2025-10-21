@@ -121,3 +121,9 @@ class IPTVClient:
     def build_episode_stream_url(self, episode_id: str, extension: Optional[str]) -> str:
         ext = extension or "mp4"
         return f"{self.base_url}/series/{self.username}/{self.password}/{episode_id}.{ext}"
+
+    def fetch_resource(self, url: str) -> bytes:
+        """Download a binary resource using the authenticated session."""
+        resp = self._session.get(url, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.content

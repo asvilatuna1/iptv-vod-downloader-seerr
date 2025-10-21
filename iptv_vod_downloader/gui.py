@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import io
 import queue
 import threading
 import tkinter as tk
 import sys
 import re
 from pathlib import Path
+from urllib.parse import urljoin
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
+
+from PIL import Image, ImageTk
 
 from .api import APIError, IPTVClient
 from .config import AppConfig, ConfigManager
@@ -59,14 +63,34 @@ class SeriesEpisodesDialog(tk.Toplevel):
         status_label = ttk.Label(self, textvariable=self.status_var)
         status_label.pack(fill="x", padx=10, pady=(10, 0))
 
-        self.tree = ttk.Treeview(self, columns=("title", "season", "episode"), show="headings", selectmode="extended")
+        content_frame = ttk.Frame(self)
+        content_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        poster_frame = ttk.Frame(content_frame, width=220)
+        poster_frame.pack(side="left", fill="y", padx=(0, 10))
+        poster_frame.pack_propagate(False)
+
+        self.poster_label = ttk.Label(
+            poster_frame,
+            text="Poster non disponibile",
+            anchor="center",
+            justify="center",
+            wraplength=200,
+        )
+        self.poster_label.pack(expand=True, fill="both")
+        self.poster_image: Optional[ImageTk.PhotoImage] = None
+
+        tree_frame = ttk.Frame(content_frame)
+        tree_frame.pack(side="left", expand=True, fill="both")
+
+        self.tree = ttk.Treeview(tree_frame, columns=("title", "season", "episode"), show="headings", selectmode="extended")
         self.tree.heading("title", text="Episodio")
         self.tree.heading("season", text="Stagione")
         self.tree.heading("episode", text="Numero")
         self.tree.column("title", width=420, anchor="w")
         self.tree.column("season", width=80, anchor="center")
         self.tree.column("episode", width=80, anchor="center")
-        self.tree.pack(expand=True, fill="both", padx=10, pady=10)
+        self.tree.pack(expand=True, fill="both")
         self.tree.bind("<Button-3>", self._show_episode_menu)
 
         season_frame = ttk.Frame(self)
@@ -100,9 +124,11 @@ class SeriesEpisodesDialog(tk.Toplevel):
         threading.Thread(target=self._load_episodes, daemon=True).start()
 
     def _load_episodes(self) -> None:
+        poster_bytes: Optional[bytes] = None
         try:
             info = self.client.get_series_info(str(self.series["series_id"]))
             episodes = info.get("episodes", {})
+            poster_bytes = self._download_poster_bytes(info)
         except Exception as exc:  # pragma: no cover - runtime safeguard
             self.after(0, lambda: self._set_error(str(exc)))
             return
@@ -149,9 +175,65 @@ class SeriesEpisodesDialog(tk.Toplevel):
                 self.season_combo["values"] = ()
                 self.season_var.set("")
 
+            self._update_poster(poster_bytes)
             self.status_var.set("Seleziona gli episodi da scaricare.")
 
         self.after(0, populate)
+
+    def _download_poster_bytes(self, info: Dict[str, Any]) -> Optional[bytes]:
+        poster_url = self._extract_poster_url(info)
+        if not poster_url:
+            return None
+        try:
+            return self.client.fetch_resource(poster_url)
+        except Exception:
+            return None
+
+    def _extract_poster_url(self, series_info: Dict[str, Any]) -> Optional[str]:
+        raw_info = series_info.get("info")
+        info_block = raw_info if isinstance(raw_info, dict) else {}
+        candidates = [
+            info_block.get("cover_big"),
+            info_block.get("cover"),
+            info_block.get("stream_icon"),
+            self.series.get("cover_big"),
+            self.series.get("cover"),
+            self.series.get("stream_icon"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            url = str(candidate).strip()
+            if not url:
+                continue
+            if url.startswith("http://") or url.startswith("https://"):
+                return url
+            return urljoin(f"{self.client.base_url}/", url.lstrip("/"))
+        return None
+
+    def _update_poster(self, data: Optional[bytes]) -> None:
+        if not data:
+            self.poster_label.configure(image="", text="Poster non disponibile")
+            self.poster_label.image = None  # type: ignore[attr-defined]
+            self.poster_image = None
+            return
+
+        try:
+            image = Image.open(io.BytesIO(data))
+        except Exception:
+            self.poster_label.configure(image="", text="Poster non disponibile")
+            self.poster_label.image = None  # type: ignore[attr-defined]
+            self.poster_image = None
+            return
+
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+
+        image.thumbnail((220, 330), Image.LANCZOS)
+        poster = ImageTk.PhotoImage(image)
+        self.poster_label.configure(image=poster, text="")
+        self.poster_label.image = poster  # type: ignore[attr-defined]
+        self.poster_image = poster
 
     def _set_error(self, message: str) -> None:
         self.status_var.set(f"Errore: {message}")
