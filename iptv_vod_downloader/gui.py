@@ -8,7 +8,7 @@ import tkinter as tk
 import sys
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .api import APIError, IPTVClient
 from .config import AppConfig, ConfigManager
@@ -36,6 +36,11 @@ class SeriesEpisodesDialog(tk.Toplevel):
         self.callback = callback
 
         self.episodes_map: Dict[str, Dict[str, Any]] = {}
+        self.season_episodes: Dict[int, List[str]] = {}
+        self._season_labels: Dict[str, int] = {}
+        self.all_episode_ids: List[str] = []
+
+        self.season_var = tk.StringVar()
 
         self.status_var = tk.StringVar(value="Caricamento episodi...")
 
@@ -51,11 +56,21 @@ class SeriesEpisodesDialog(tk.Toplevel):
         self.tree.column("episode", width=80, anchor="center")
         self.tree.pack(expand=True, fill="both", padx=10, pady=10)
 
+        season_frame = ttk.Frame(self)
+        season_frame.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(season_frame, text="Stagione").pack(side="left")
+        self.season_combo = ttk.Combobox(season_frame, state="readonly", textvariable=self.season_var, width=20, values=())
+        self.season_combo.pack(side="left", padx=5)
+        ttk.Button(season_frame, text="Seleziona stagione", command=self._select_current_season).pack(side="left", padx=5)
+        ttk.Button(season_frame, text="Aggiungi stagione", command=self._add_current_season).pack(side="left", padx=5)
+        ttk.Button(season_frame, text="Aggiungi serie completa", command=self._add_entire_series).pack(side="right")
+
         button_frame = ttk.Frame(self)
         button_frame.pack(fill="x", padx=10, pady=(0, 10))
 
+        ttk.Button(button_frame, text="Seleziona tutti", command=self._select_all).pack(side="left")
         add_button = ttk.Button(button_frame, text="Aggiungi episodi selezionati", command=self.on_confirm)
-        add_button.pack(side="left")
+        add_button.pack(side="left", padx=5)
 
         close_button = ttk.Button(button_frame, text="Chiudi", command=self.destroy)
         close_button.pack(side="right")
@@ -74,6 +89,10 @@ class SeriesEpisodesDialog(tk.Toplevel):
 
         def populate() -> None:
             self.tree.delete(*self.tree.get_children())
+            self.episodes_map.clear()
+            self.season_episodes.clear()
+            self._season_labels.clear()
+            self.all_episode_ids = []
             for season_key in sorted(episodes.keys(), key=lambda x: int(x) if str(x).isdigit() else 0):
                 episodes_list = episodes[season_key]
                 try:
@@ -94,6 +113,21 @@ class SeriesEpisodesDialog(tk.Toplevel):
                         "season": season_num,
                         "episode": episode,
                     }
+                    self.season_episodes.setdefault(season_num, []).append(episode_id)
+                    self.all_episode_ids.append(episode_id)
+
+            season_labels: List[str] = []
+            for season in sorted(self.season_episodes.keys()):
+                label = self._format_season_label(season)
+                season_labels.append(label)
+                self._season_labels[label] = season
+
+            if season_labels:
+                self.season_combo["values"] = season_labels
+                self.season_var.set(season_labels[0])
+            else:
+                self.season_combo["values"] = ()
+                self.season_var.set("")
 
             self.status_var.set("Seleziona gli episodi da scaricare.")
 
@@ -105,25 +139,72 @@ class SeriesEpisodesDialog(tk.Toplevel):
 
     def on_confirm(self) -> None:
         selection = self.tree.selection()
-        if not selection:
+        payloads = self._build_payloads(selection)
+        if not payloads:
             messagebox.showinfo("Nessuna selezione", "Seleziona almeno un episodio.", parent=self)
             return
+        self.callback(payloads)
+        self.destroy()
 
-        to_download = []
-        for item_id in selection:
-            if item_id not in self.episodes_map:
+    # Helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _format_season_label(season: int) -> str:
+        return "Speciali" if season <= 0 else f"Stagione {season:02d}"
+
+    def _build_payloads(self, episode_ids: Iterable[str]) -> List[Dict[str, Any]]:
+        payloads: List[Dict[str, Any]] = []
+        for item_id in episode_ids:
+            data = self.episodes_map.get(item_id)
+            if not data:
                 continue
-            data = self.episodes_map[item_id]
-            to_download.append(
+            payloads.append(
                 {
                     "series": self.series,
                     "season": data["season"],
                     "episode": data["episode"],
                 }
             )
-        if to_download:
-            self.callback(to_download)
-        self.destroy()
+        return payloads
+
+    def _get_selected_season(self) -> Optional[int]:
+        if not self._season_labels:
+            return None
+        return self._season_labels.get(self.season_var.get())
+
+    def _select_all(self) -> None:
+        self.tree.selection_set(*self.tree.get_children())
+
+    def _select_current_season(self) -> None:
+        season = self._get_selected_season()
+        if season is None:
+            messagebox.showinfo("Nessuna stagione", "Nessuna stagione disponibile per la selezione.", parent=self)
+            return
+        episode_ids = self.season_episodes.get(season, [])
+        if not episode_ids:
+            messagebox.showinfo("Vuota", "La stagione selezionata non contiene episodi disponibili.", parent=self)
+            return
+        self.tree.selection_set(*episode_ids)
+
+    def _add_current_season(self) -> None:
+        season = self._get_selected_season()
+        if season is None:
+            messagebox.showinfo("Nessuna stagione", "Seleziona una stagione da aggiungere.", parent=self)
+            return
+        episode_ids = self.season_episodes.get(season, [])
+        self._queue_payloads(self._build_payloads(episode_ids), close_dialog=False)
+
+    def _add_entire_series(self) -> None:
+        self._queue_payloads(self._build_payloads(self.all_episode_ids), close_dialog=False)
+
+    def _queue_payloads(self, payloads: List[Dict[str, Any]], close_dialog: bool) -> None:
+        if not payloads:
+            messagebox.showinfo("Nessun episodio", "Nessun episodio disponibile per l'aggiunta.", parent=self)
+            return
+        self.callback(payloads)
+        self.status_var.set(f"Aggiunti {len(payloads)} episodi alla coda.")
+        if close_dialog:
+            self.destroy()
 
 
 class IPTVApp(tk.Tk):
