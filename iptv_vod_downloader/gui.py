@@ -13,7 +13,18 @@ from typing import Any, Dict, Iterable, List, Optional
 from .api import APIError, IPTVClient
 from .config import AppConfig, ConfigManager
 from .downloader import DownloadItem, DownloadManager
-from .utils import build_episode_filename, sanitise_filename
+from .utils import build_episode_filename, match_search_term, sanitise_filename
+
+
+STATUS_LABELS = {
+    "queued": "In coda",
+    "downloading": "Scaricamento",
+    "completed": "Completato",
+    "failed": "Errore",
+    "paused": "In pausa",
+    "removed": "Rimosso",
+    "cancelled": "Annullato",
+}
 
 
 class SeriesEpisodesDialog(tk.Toplevel):
@@ -55,6 +66,7 @@ class SeriesEpisodesDialog(tk.Toplevel):
         self.tree.column("season", width=80, anchor="center")
         self.tree.column("episode", width=80, anchor="center")
         self.tree.pack(expand=True, fill="both", padx=10, pady=10)
+        self.tree.bind("<Button-3>", self._show_episode_menu)
 
         season_frame = ttk.Frame(self)
         season_frame.pack(fill="x", padx=10, pady=(0, 10))
@@ -74,6 +86,13 @@ class SeriesEpisodesDialog(tk.Toplevel):
 
         close_button = ttk.Button(button_frame, text="Chiudi", command=self.destroy)
         close_button.pack(side="right")
+
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="Seleziona tutti", command=self._select_all)
+        self.context_menu.add_command(label="Seleziona stagione", command=self._select_current_season)
+        self.context_menu.add_command(label="Aggiungi episodi selezionati", command=self.on_confirm)
+        self.context_menu.add_command(label="Aggiungi stagione", command=self._add_current_season)
+        self.context_menu.add_command(label="Aggiungi serie completa", command=self._add_entire_series)
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
@@ -206,6 +225,20 @@ class SeriesEpisodesDialog(tk.Toplevel):
         if close_dialog:
             self.destroy()
 
+    def _show_episode_menu(self, event: tk.Event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            if iid not in self.tree.selection():
+                self.tree.selection_set(iid)
+            self.tree.focus(iid)
+        else:
+            for sel in self.tree.selection():
+                self.tree.selection_remove(sel)
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
 
 class IPTVApp(tk.Tk):
     """Main application window."""
@@ -301,8 +334,23 @@ class IPTVApp(tk.Tk):
         self.queue_tree.configure(yscrollcommand=queue_scroll.set)
         queue_scroll.grid(row=0, column=1, sticky="ns")
 
+        self.queue_menu = tk.Menu(self.queue_tree, tearoff=0)
+        self.queue_menu.add_command(label="Avvia download", command=self._start_downloads)
+        self.queue_menu.add_command(label="Metti in pausa", command=self._pause_downloads)
+        self.queue_menu.add_command(label="Ferma download", command=self._stop_downloads)
+        self.queue_menu.add_separator()
+        self.queue_menu.add_command(label="Rimuovi selezionati", command=self._remove_selected_from_queue)
+        self.queue_menu.add_command(label="Pulisci completati", command=self._clear_completed_downloads)
+        self.queue_menu.add_separator()
+        self.queue_menu.add_command(label="Apri cartella download", command=self._open_download_folder)
+        self.queue_tree.bind("<Button-3>", self._show_queue_menu)
+
         queue_buttons = ttk.Frame(self.queue_frame)
         queue_buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
+        ttk.Button(queue_buttons, text="Avvia", command=self._start_downloads).pack(side="left", padx=5)
+        ttk.Button(queue_buttons, text="Pausa", command=self._pause_downloads).pack(side="left", padx=5)
+        ttk.Button(queue_buttons, text="Ferma", command=self._stop_downloads).pack(side="left", padx=5)
+        ttk.Button(queue_buttons, text="Pulisci completati", command=self._clear_completed_downloads).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Rimuovi selezionati", command=self._remove_selected_from_queue).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Apri cartella download", command=self._open_download_folder).pack(side="right", padx=5)
 
@@ -339,6 +387,7 @@ class IPTVApp(tk.Tk):
         search_var = tk.StringVar()
         entry = ttk.Entry(search_frame, textvariable=search_var)
         entry.pack(side="left", fill="x", expand=True, padx=5)
+        entry.bind("<Return>", lambda _event, k=kind: self._on_search(k))
         ttk.Button(search_frame, text="Cerca", command=lambda k=kind: self._on_search(k)).pack(side="left")
         ttk.Button(search_frame, text="Pulisci", command=lambda v=search_var, k=kind: self._clear_search(k, v)).pack(side="left", padx=5)
 
@@ -355,6 +404,13 @@ class IPTVApp(tk.Tk):
         scroll_y = ttk.Scrollbar(content, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll_y.set)
         scroll_y.grid(row=1, column=1, sticky="ns")
+
+        context_menu = tk.Menu(tree, tearoff=0)
+        if is_series:
+            context_menu.add_command(label="Apri serie", command=self._open_series_dialog)
+        context_menu.add_command(label="Aggiungi selezionati alla coda", command=lambda k=kind: self._add_selected_to_queue(k))
+        tree.bind("<Button-3>", lambda event, m=context_menu, t=tree: self._show_tree_menu(event, t, m))
+        setattr(self, f"{kind}_menu", context_menu)
 
         action_frame = ttk.Frame(content)
         action_frame.grid(row=2, column=0, sticky="ew", pady=5)
@@ -486,6 +542,34 @@ class IPTVApp(tk.Tk):
             category_id = self.category_indexes.get(kind, ["0"])[selection[0]]
         self._load_items(kind, category_id=category_id)
 
+    def _show_tree_menu(self, event: tk.Event, tree: ttk.Treeview, menu: tk.Menu) -> None:
+        iid = tree.identify_row(event.y)
+        if iid:
+            if iid not in tree.selection():
+                tree.selection_set(iid)
+            tree.focus(iid)
+        else:
+            for sel in tree.selection():
+                tree.selection_remove(sel)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _show_queue_menu(self, event: tk.Event) -> None:
+        iid = self.queue_tree.identify_row(event.y)
+        if iid:
+            if iid not in self.queue_tree.selection():
+                self.queue_tree.selection_set(iid)
+            self.queue_tree.focus(iid)
+        else:
+            for sel in self.queue_tree.selection():
+                self.queue_tree.selection_remove(sel)
+        try:
+            self.queue_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.queue_menu.grab_release()
+
     def _load_items(self, kind: str, category_id: str, search_term: Optional[str] = None) -> None:
         if not self.client:
             return
@@ -504,9 +588,10 @@ class IPTVApp(tk.Tk):
                 return
 
             if search_term:
-                lowered = search_term.lower()
                 items = [
-                    item for item in items if lowered in (item.get("name") or "").lower()
+                    item
+                    for item in items
+                    if match_search_term(search_term, item.get("name") or "")
                 ]
 
             items.sort(key=lambda item: (item.get("name") or "").lower())
@@ -652,13 +737,41 @@ class IPTVApp(tk.Tk):
         selection = self.queue_tree.selection()
         if not selection:
             return
+        blocked = False
         for queue_id in selection:
             removed = self.download_manager.remove_item(queue_id)
             if removed:
+                self._delete_queue_entry(queue_id)
+            else:
                 item = self.queue_items.get(queue_id)
-                if item:
-                    item["status"] = "removed"
-                    self._update_queue_row(item)
+                if item and item.get("status") not in {"downloading", "queued", "paused"}:
+                    self._delete_queue_entry(queue_id)
+                else:
+                    blocked = True
+        if blocked:
+            messagebox.showinfo("Download in corso", "Impossibile rimuovere i download attivi. Metti in pausa o ferma prima.")
+
+    def _delete_queue_entry(self, queue_id: str) -> None:
+        if self.queue_tree.exists(queue_id):
+            self.queue_tree.delete(queue_id)
+        self.queue_items.pop(queue_id, None)
+
+    def _start_downloads(self) -> None:
+        self.download_manager.resume()
+        self.status_var.set("Download in esecuzione.")
+
+    def _pause_downloads(self) -> None:
+        self.download_manager.pause()
+        self.status_var.set("Download in pausa.")
+
+    def _stop_downloads(self) -> None:
+        self.download_manager.stop_all()
+        self.status_var.set("Download fermati.")
+
+    def _clear_completed_downloads(self) -> None:
+        to_remove = [queue_id for queue_id, item in self.queue_items.items() if item.get("status") == "completed"]
+        for queue_id in to_remove:
+            self._delete_queue_entry(queue_id)
 
     def _open_download_folder(self) -> None:
         target = Path(self.current_config.download_dir or Path.home())
@@ -699,10 +812,14 @@ class IPTVApp(tk.Tk):
         progress = item.get("progress", 0.0)
         percent = f"{int(progress * 100)}%" if progress else "0%"
         status = item.get("status", "queued")
+        if status in {"removed", "cancelled"}:
+            self._delete_queue_entry(queue_id)
+            return
+        display_status = STATUS_LABELS.get(status, status)
         values = (
             item.get("title", ""),
             "Serie" if item.get("kind") == "episode" else "Film",
-            status,
+            display_status,
             percent,
             item.get("target_path", ""),
         )

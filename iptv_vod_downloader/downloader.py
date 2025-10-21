@@ -54,13 +54,19 @@ class DownloadManager:
         self._lock = threading.Lock()
         self._has_items = threading.Event()
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
+        self._paused = False
         self._worker: Optional[threading.Thread] = None
         self._callback = callback
+        self._current_item: Optional[DownloadItem] = None
 
     def start(self) -> None:
         if self._worker and self._worker.is_alive():
             return
         self._stop_event.clear()
+        self._pause_event.set()
+        self._paused = False
         self._worker = threading.Thread(target=self._run, name="DownloadWorker", daemon=True)
         self._worker.start()
 
@@ -69,6 +75,48 @@ class DownloadManager:
         self._has_items.set()
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=2)
+
+    def pause(self) -> None:
+        self._paused = True
+        self._pause_event.clear()
+        item = self._current_item
+        if item and item.status == "downloading":
+            item.status = "paused"
+            self._notify(item)
+
+    def resume(self) -> None:
+        self.start()
+        self._paused = False
+        self._pause_event.set()
+        item = self._current_item
+        if item and item.status == "paused":
+            item.status = "downloading"
+            self._notify(item)
+
+    def stop_all(self) -> None:
+        self._paused = False
+        self._pause_event.set()
+        self._stop_event.set()
+        self._has_items.set()
+        with self._lock:
+            queued = list(self._queue)
+            self._queue.clear()
+        for item in queued:
+            item.status = "cancelled"
+            item.error = "stopped by user"
+            self._notify(item)
+
+        current = self._current_item
+        if current and current.status in {"downloading", "paused"}:
+            current.status = "failed"
+            current.error = "stopped by user"
+            self._notify(current)
+
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=2)
+        self._worker = None
+        self._stop_event.clear()
+        self._current_item = None
 
     def add_items(self, items: Iterable[DownloadItem]) -> None:
         with self._lock:
@@ -100,6 +148,7 @@ class DownloadManager:
         # Streaming endpoints return raw media so relax Accept header.
         session.headers["Accept"] = "*/*"
         while not self._stop_event.is_set():
+            self._pause_event.wait()
             item = self._next_item()
             if item is None:
                 self._has_items.wait(timeout=0.5)
@@ -112,7 +161,9 @@ class DownloadManager:
                 self._has_items.clear()
                 return None
             # pop the first queued task
-            return self._queue.pop(0)
+            item = self._queue.pop(0)
+            self._current_item = item
+            return item
 
     def _download_item(self, session: requests.Session, item: DownloadItem) -> None:
         item.status = "downloading"
@@ -129,6 +180,7 @@ class DownloadManager:
             item.progress = 1.0
             item.error = None
             self._notify(item)
+            self._current_item = None
             return
 
         try:
@@ -143,6 +195,13 @@ class DownloadManager:
                     for chunk in resp.iter_content(chunk_size=chunk_size):
                         if self._stop_event.is_set():
                             raise RuntimeError("Download stopped by user.")
+                        while self._paused and not self._stop_event.is_set():
+                            item.status = "paused"
+                            self._notify(item)
+                            self._pause_event.wait(timeout=0.2)
+                        if item.status == "paused" and not self._paused:
+                            item.status = "downloading"
+                            self._notify(item)
                         if not chunk:
                             continue
                         fh.write(chunk)
@@ -166,6 +225,8 @@ class DownloadManager:
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)
             self._notify(item)
+        finally:
+            self._current_item = None
 
     def _notify(self, item: DownloadItem) -> None:
         if self._callback:
