@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, List, Optional
 
 import requests
 
+from .api import DEFAULT_HEADERS
 from .utils import ensure_directory
 
 StatusCallback = Callable[["DownloadItem"], None]
@@ -95,6 +96,9 @@ class DownloadManager:
 
     def _run(self) -> None:
         session = requests.Session()
+        session.headers.update(DEFAULT_HEADERS)
+        # Streaming endpoints return raw media so relax Accept header.
+        session.headers["Accept"] = "*/*"
         while not self._stop_event.is_set():
             item = self._next_item()
             if item is None:

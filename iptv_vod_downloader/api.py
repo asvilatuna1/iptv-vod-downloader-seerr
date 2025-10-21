@@ -10,6 +10,15 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/118.0.5993.70 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
+
 
 class APIError(RuntimeError):
     """Raised when the IPTV API returns an unexpected payload."""
@@ -33,16 +42,7 @@ class IPTVClient:
         self.password = password
         self.api_url = f"{self.base_url}/player_api.php"
         self._session = requests.Session()
-        self._session.headers.update(
-            {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/118.0.5993.70 Safari/537.36"
-                ),
-                "Accept": "application/json, text/plain, */*",
-            }
-        )
+        self._session.headers.update(DEFAULT_HEADERS)
         self.timeout = (5, 60)
 
     def _request(self, **params: Any) -> Any:
