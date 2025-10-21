@@ -6,6 +6,7 @@ import queue
 import threading
 import tkinter as tk
 import sys
+import re
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Iterable, List, Optional
@@ -369,7 +370,7 @@ class IPTVApp(tk.Tk):
         sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 10))
         ttk.Label(sidebar, text="Categorie").pack(anchor="w", pady=(0, 5))
 
-        listbox = tk.Listbox(sidebar, exportselection=False, height=20)
+        listbox = tk.Listbox(sidebar, exportselection=False, height=20, width=28)
         listbox.pack(fill="both", expand=True)
         listbox.bind("<<ListboxSelect>>", lambda _event, k=kind: self._on_category_selected(k))
 
@@ -391,14 +392,12 @@ class IPTVApp(tk.Tk):
         ttk.Button(search_frame, text="Cerca", command=lambda k=kind: self._on_search(k)).pack(side="left")
         ttk.Button(search_frame, text="Pulisci", command=lambda v=search_var, k=kind: self._clear_search(k, v)).pack(side="left", padx=5)
 
-        columns = ("title", "year", "rating")
+        columns = ("title", "year")
         tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
         tree.heading("title", text="Titolo")
         tree.heading("year", text="Anno")
-        tree.heading("rating", text="Valutazione")
         tree.column("title", width=420, anchor="w")
         tree.column("year", width=120, anchor="center")
-        tree.column("rating", width=120, anchor="center")
         tree.grid(row=1, column=0, sticky="nsew")
 
         scroll_y = ttk.Scrollbar(content, orient="vertical", command=tree.yview)
@@ -410,6 +409,8 @@ class IPTVApp(tk.Tk):
             context_menu.add_command(label="Apri serie", command=self._open_series_dialog)
         context_menu.add_command(label="Aggiungi selezionati alla coda", command=lambda k=kind: self._add_selected_to_queue(k))
         tree.bind("<Button-3>", lambda event, m=context_menu, t=tree: self._show_tree_menu(event, t, m))
+        if is_series:
+            tree.bind("<Double-1>", lambda _event: self._open_series_dialog())
         setattr(self, f"{kind}_menu", context_menu)
 
         action_frame = ttk.Frame(content)
@@ -575,7 +576,7 @@ class IPTVApp(tk.Tk):
             return
         tree: ttk.Treeview = getattr(self, f"{kind}_tree")
         tree.delete(*tree.get_children())
-        tree.insert("", "end", values=("Caricamento...", "", ""))
+        tree.insert("", "end", values=("Caricamento...", ""))
 
         def worker() -> None:
             try:
@@ -602,7 +603,7 @@ class IPTVApp(tk.Tk):
     def _on_items_error(self, kind: str, message: str) -> None:
         tree: ttk.Treeview = getattr(self, f"{kind}_tree")
         tree.delete(*tree.get_children())
-        tree.insert("", "end", values=(f"Errore: {message}", "", ""))
+        tree.insert("", "end", values=(f"Errore: {message}", ""))
 
     def _populate_items(self, kind: str, items: List[Dict[str, Any]]) -> None:
         tree: ttk.Treeview = getattr(self, f"{kind}_tree")
@@ -612,18 +613,76 @@ class IPTVApp(tk.Tk):
         for item in items:
             if kind == "movies":
                 identifier = str(item.get("stream_id"))
-                year = item.get("year") or ""
-                rating = item.get("rating") or item.get("rating5based") or ""
+                info = item.get("info") if isinstance(item.get("info"), dict) else None
+                year = self._normalise_year(
+                    item.get("year"),
+                    item.get("releasedate"),
+                    item.get("releaseDate"),
+                    item.get("release_date"),
+                    info.get("year") if info else None,
+                    info.get("releasedate") if info else None,
+                    info.get("releaseDate") if info else None,
+                )
             else:
                 identifier = str(item.get("series_id"))
-                year = item.get("releaseDate") or ""
-                rating = item.get("rating") or ""
+                info = item.get("info") if isinstance(item.get("info"), dict) else None
+                year = self._normalise_year(
+                    item.get("releaseDate"),
+                    item.get("releasedate"),
+                    item.get("start"),
+                    item.get("year"),
+                    info.get("releasedate") if info else None,
+                    info.get("releaseDate") if info else None,
+                    info.get("year") if info else None,
+                )
 
             name = item.get("name") or "Senza titolo"
-            tree.insert("", "end", iid=identifier, values=(name, year, rating))
+            tree.insert("", "end", iid=identifier, values=(name, year))
+            if year:
+                item["display_year"] = year
             data_map[identifier] = item
 
         self.items_map[kind] = data_map
+
+    def _normalise_year(self, *values: Any) -> str:
+        for value in values:
+            year = self._extract_year(value)
+            if year:
+                return year
+        return ""
+
+    @staticmethod
+    def _extract_year(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (int, float)):
+            year = int(value)
+            if 1900 <= year <= 2100:
+                return str(year)
+            return ""
+        text = str(value).strip()
+        match = re.search(r"(\d{4})", text)
+        if not match:
+            return ""
+        year = int(match.group(1))
+        if 1900 <= year <= 2100:
+            return str(year)
+        return ""
+
+    def _update_tree_year(self, kind: str, identifier: str, year: str) -> None:
+        if not year:
+            return
+        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        if not tree.exists(identifier):
+            return
+        values = list(tree.item(identifier, "values"))
+        if len(values) < 2:
+            return
+        values[1] = year
+        tree.item(identifier, values=values)
+        if identifier in self.items_map.get(kind, {}):
+            self.items_map[kind][identifier]["display_year"] = year
+            self.items_map[kind][identifier]["year"] = year
 
     # ------------------------------------------------------------------
     # Queue handling
@@ -656,11 +715,20 @@ class IPTVApp(tk.Tk):
                 meta_info = info.get("info", {}) if isinstance(info.get("info"), dict) else {}
                 extension = meta_info.get("container_extension") or stream.get("container_extension") or "mp4"
                 title = stream.get("name") or f"Film {stream['stream_id']}"
-                release = meta_info.get("releaseDate") or meta_info.get("releasedate") or stream.get("year", "")
+                year_value = self._normalise_year(
+                    stream.get("display_year"),
+                    stream.get("year"),
+                    meta_info.get("year"),
+                    meta_info.get("releaseDate"),
+                    meta_info.get("releasedate"),
+                    meta_info.get("release_date"),
+                )
+
                 safe_title = sanitise_filename(title)
-                if release:
-                    release_year = str(release)[:4]
-                    safe_title = f"{safe_title} ({release_year})"
+                if year_value:
+                    safe_title = f"{safe_title} ({year_value})"
+                    stream["display_year"] = year_value
+                    self._update_tree_year("movies", iid, year_value)
 
                 target_dir = Path(self.current_config.download_dir) / "Film"
                 target_path = target_dir / f"{safe_title}.{extension}"
