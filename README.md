@@ -2,6 +2,15 @@
 
 Desktop application written in Python for browsing and downloading VOD content from IPTV providers compatible with the Xtream Codes API.
 
+## License
+
+This project is released under the MIT license. See `LICENSE`.
+
+## Intended Use
+
+This software is intended only for accessing and downloading content you are authorized to use.
+You are responsible for complying with the laws, service terms, and copyright rules that apply in your jurisdiction.
+
 ## Features
 
 - Save IPTV connection settings locally.
@@ -31,6 +40,12 @@ Install dependencies with:
 
 ```bash
 pip install -r requirements.txt
+```
+
+Run the test suite with:
+
+```bash
+python -m unittest -v
 ```
 
 ## Run From Source
