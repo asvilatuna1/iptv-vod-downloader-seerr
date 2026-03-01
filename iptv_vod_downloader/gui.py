@@ -355,7 +355,6 @@ class IPTVApp(tk.Tk):
         self._catalog_request_token = 0
         self._items_request_tokens: Dict[str, int] = {"movies": 0, "series": 0}
         self._queue_state_save_job: Optional[str] = None
-        self._queue_progress_widgets: Dict[str, tuple[ttk.Frame, ttk.Progressbar, ttk.Label]] = {}
 
         self.category_indexes: Dict[str, List[str]] = {"movies": [], "series": []}
         self.items_map: Dict[str, Dict[str, Dict[str, Any]]] = {"movies": {}, "series": {}}
@@ -477,10 +476,9 @@ class IPTVApp(tk.Tk):
         self.queue_tree.column("error", width=240, anchor="w")
         self.queue_tree.grid(row=1, column=0, sticky="nsew")
         self.queue_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_queue_details())
-        self.queue_tree.bind("<Configure>", lambda _event: self.after_idle(self._sync_queue_progress_widgets))
 
         queue_scroll = ttk.Scrollbar(self.queue_frame, orient="vertical", command=self.queue_tree.yview)
-        self.queue_tree.configure(yscrollcommand=lambda first, last: self._on_queue_tree_scroll(queue_scroll, first, last))
+        self.queue_tree.configure(yscrollcommand=queue_scroll.set)
         queue_scroll.grid(row=1, column=1, sticky="ns")
 
         self.queue_menu = tk.Menu(self.queue_tree, tearoff=0)
@@ -1160,40 +1158,23 @@ class IPTVApp(tk.Tk):
             item.get("error", "") or "",
         )
 
-    def _on_queue_tree_scroll(self, scrollbar: ttk.Scrollbar, first: str, last: str) -> None:
-        scrollbar.set(first, last)
-        self.after_idle(self._sync_queue_progress_widgets)
+    def _update_queue_summary(self) -> None:
+        total = len([item for item in self.queue_items.values() if item.get("status") not in {"removed", "cancelled"}])
+        queued = len([item for item in self.queue_items.values() if item.get("status") == "queued"])
+        downloading = len([item for item in self.queue_items.values() if item.get("status") == "downloading"])
+        failed = len([item for item in self.queue_items.values() if item.get("status") == "failed"])
+        self.queue_summary_var.set(f"Total {total} | Queued {queued} | Downloading {downloading} | Failed {failed}")
 
-    def _create_queue_progress_widget(self, queue_id: str) -> tuple[ttk.Frame, ttk.Progressbar, ttk.Label]:
-        frame = ttk.Frame(self.queue_tree)
-        progress = ttk.Progressbar(frame, orient="horizontal", mode="determinate", maximum=100)
-        progress.place(relx=0, rely=0, relwidth=1, relheight=1)
-        label = ttk.Label(frame, anchor="center")
-        label.place(relx=0.5, rely=0.5, anchor="center")
-        self._queue_progress_widgets[queue_id] = (frame, progress, label)
-        return frame, progress, label
-
-    def _sync_queue_progress_widgets(self) -> None:
-        visible_ids = set(self.queue_tree.get_children())
-        for queue_id in list(self._queue_progress_widgets):
-            if queue_id not in visible_ids:
-                frame, _, _ = self._queue_progress_widgets.pop(queue_id)
-                frame.destroy()
-
-        for queue_id in visible_ids:
-            bbox = self.queue_tree.bbox(queue_id, "progress")
-            item = self.queue_items.get(queue_id)
-            if not bbox or not item:
-                if queue_id in self._queue_progress_widgets:
-                    self._queue_progress_widgets[queue_id][0].place_forget()
-                continue
-
-            x, y, width, height = bbox
-            frame, progress, label = self._queue_progress_widgets.get(queue_id) or self._create_queue_progress_widget(queue_id)
-            value = max(0, min(100, int(float(item.get("progress", 0.0)) * 100)))
-            progress.configure(value=value)
-            label.configure(text=f"{value}%")
-            frame.place(x=x + 2, y=y + 1, width=max(10, width - 4), height=max(10, height - 2))
+    def _update_queue_tree_item(self, queue_id: str, item: Dict[str, Any]) -> None:
+        if not self._queue_item_matches_filter(item):
+            if self.queue_tree.exists(queue_id):
+                self._refresh_queue_view()
+            return
+        if not self.queue_tree.exists(queue_id):
+            self._refresh_queue_view()
+            return
+        self.queue_tree.item(queue_id, values=self._queue_row_values(item))
+        self._update_queue_details()
 
     def _refresh_queue_view(self) -> None:
         selected = set(self.queue_tree.selection())
@@ -1213,13 +1194,8 @@ class IPTVApp(tk.Tk):
             if queue_id in selected:
                 self.queue_tree.selection_add(queue_id)
 
-        total = len([item for item in self.queue_items.values() if item.get("status") not in {"removed", "cancelled"}])
-        queued = len([item for item in self.queue_items.values() if item.get("status") == "queued"])
-        downloading = len([item for item in self.queue_items.values() if item.get("status") == "downloading"])
-        failed = len([item for item in self.queue_items.values() if item.get("status") == "failed"])
-        self.queue_summary_var.set(f"Total {total} | Queued {queued} | Downloading {downloading} | Failed {failed}")
+        self._update_queue_summary()
         self._update_queue_details()
-        self.after_idle(self._sync_queue_progress_widgets)
 
     def _refresh_catalog_views(self) -> None:
         for kind in ("movies", "series"):
@@ -1493,28 +1469,47 @@ class IPTVApp(tk.Tk):
         if not selection:
             return
         blocked = False
+        removable_queue_ids: List[str] = []
         for queue_id in selection:
             removed = self.download_manager.remove_item(queue_id)
             if removed:
                 item = self.queue_items.get(queue_id)
                 if item and item.get("status") not in {"downloading", "paused"}:
-                    self._delete_queue_entry(queue_id)
+                    removable_queue_ids.append(queue_id)
             else:
                 item = self.queue_items.get(queue_id)
                 if item and item.get("status") not in {"downloading", "queued", "paused"}:
-                    self._delete_queue_entry(queue_id)
+                    removable_queue_ids.append(queue_id)
                 else:
                     blocked = True
+        self._delete_queue_entries(removable_queue_ids)
         if blocked:
             messagebox.showinfo("Active downloads", "Active downloads cannot be removed. Pause or stop them first.")
 
     def _delete_queue_entry(self, queue_id: str) -> None:
-        self.queue_items.pop(queue_id, None)
+        self._delete_queue_entries([queue_id])
+
+    def _delete_queue_entries(self, queue_ids: Iterable[str]) -> None:
+        removed_any = False
+        for queue_id in queue_ids:
+            if self.queue_items.pop(queue_id, None) is not None:
+                removed_any = True
+        if not removed_any:
+            return
         self._refresh_queue_view()
         self._schedule_queue_state_save()
         self._refresh_catalog_views()
 
     def _start_downloads(self) -> None:
+        active_queue_statuses = {"queued", "downloading", "paused"}
+        if not any(item.get("status") in active_queue_statuses for item in self.queue_items.values()):
+            restart_items = self._collect_restartable_queue_items({"stopped"})
+            if restart_items:
+                self.download_manager.add_items(restart_items)
+                self.status_var.set(f"Re-queued {len(restart_items)} stopped downloads.")
+            else:
+                self.status_var.set("No queued downloads to start.")
+                return
         self.download_manager.resume()
         self.status_var.set("Downloads running.")
 
@@ -1523,8 +1518,8 @@ class IPTVApp(tk.Tk):
         self.status_var.set("Downloads paused.")
 
     def _stop_downloads(self) -> None:
-        self.download_manager.stop_all()
         self.status_var.set("Downloads stopped.")
+        threading.Thread(target=self.download_manager.stop_all, daemon=True).start()
 
     def _retry_failed_downloads(self) -> None:
         self._retry_queue_items(self.queue_items.keys(), require_selection=False)
@@ -1533,14 +1528,7 @@ class IPTVApp(tk.Tk):
         self._retry_queue_items(self.queue_tree.selection(), require_selection=True)
 
     def _retry_queue_items(self, queue_ids: Iterable[str], require_selection: bool) -> None:
-        retry_items: List[DownloadItem] = []
-        for queue_id in queue_ids:
-            item = self.queue_items.get(queue_id)
-            if not item or item.get("status") not in {"failed", "stopped"}:
-                continue
-            retry_item = self._build_retry_download_item(item)
-            if retry_item and not self._is_duplicate_download(retry_item):
-                retry_items.append(retry_item)
+        retry_items = self._collect_restartable_queue_items({"failed", "stopped"}, queue_ids)
 
         if not retry_items:
             if require_selection:
@@ -1552,6 +1540,22 @@ class IPTVApp(tk.Tk):
         self.download_manager.add_items(retry_items)
         total = len(retry_items)
         self.status_var.set(f"Re-queued {total} failed downloads.")
+
+    def _collect_restartable_queue_items(
+        self,
+        allowed_statuses: set[str],
+        queue_ids: Optional[Iterable[str]] = None,
+    ) -> List[DownloadItem]:
+        retry_items: List[DownloadItem] = []
+        source_ids = queue_ids if queue_ids is not None else self.queue_items.keys()
+        for queue_id in source_ids:
+            item = self.queue_items.get(queue_id)
+            if not item or item.get("status") not in allowed_statuses:
+                continue
+            retry_item = self._build_retry_download_item(item)
+            if retry_item and not self._is_duplicate_download(retry_item):
+                retry_items.append(retry_item)
+        return retry_items
 
     def _build_retry_download_item(self, item: Dict[str, Any]) -> Optional[DownloadItem]:
         stream_url = item.get("stream_url")
@@ -1573,8 +1577,7 @@ class IPTVApp(tk.Tk):
 
     def _clear_completed_downloads(self) -> None:
         to_remove = [queue_id for queue_id, item in self.queue_items.items() if item.get("status") == "completed"]
-        for queue_id in to_remove:
-            self._delete_queue_entry(queue_id)
+        self._delete_queue_entries(to_remove)
 
     def _open_download_folder(self) -> None:
         target = Path(self.current_config.download_dir or Path.home())
@@ -1601,7 +1604,7 @@ class IPTVApp(tk.Tk):
             self._refresh_queue_view()
         if needs_catalog_refresh:
             self._refresh_catalog_views()
-        self.after(500, self._process_download_updates)
+        self.after(100, self._process_download_updates)
 
     def _update_queue_row(self, item: Dict[str, Any]) -> tuple[bool, bool]:
         queue_id = item["queue_id"]
@@ -1612,10 +1615,14 @@ class IPTVApp(tk.Tk):
             self._schedule_queue_state_save()
             return True, True
         self.queue_items[queue_id] = item
-        if not previous or previous.get("status") != status:
+        is_new_item = not previous
+        status_changed = previous.get("status") != status
+        if is_new_item or status_changed:
             self._schedule_queue_state_save()
-        catalog_refresh = previous.get("status") != status and status in {"queued", "completed", "failed", "stopped"}
-        return True, catalog_refresh
+            catalog_refresh = status_changed and status in {"queued", "completed", "failed", "stopped"}
+            return True, catalog_refresh
+        self._update_queue_tree_item(queue_id, item)
+        return False, False
 
 
 def run_app() -> None:

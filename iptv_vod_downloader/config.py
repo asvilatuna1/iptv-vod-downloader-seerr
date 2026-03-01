@@ -83,8 +83,8 @@ class WindowState:
 
     geometry: str = "1200x800"
     selected_tab: str = "movies"
-    queue_filter: str = "Tutti"
-    queue_sort: str = "Inserimento"
+    queue_filter: str = "All"
+    queue_sort: str = "Insertion order"
 
 
 class JSONStateManager:
