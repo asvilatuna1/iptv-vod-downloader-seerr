@@ -19,6 +19,33 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Build eseguibile
+
+Per generare un `.exe` Windows in locale:
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm --clean --onedir --windowed --name iptv-vod-downloader main.py
+```
+
+Verrà creata una cartella portable in `dist/iptv-vod-downloader/` contenente l'eseguibile e le dipendenze necessarie.
+
+## Release automatiche
+
+Il repository include una pipeline GitHub Actions in `.github/workflows/build-release.yml` che:
+
+- su push a `main` o avvio manuale genera un artifact scaricabile con l'eseguibile Windows;
+- su push di un tag `v*` genera uno zip della cartella portable Windows e lo pubblica in GitHub Releases.
+
+Esempio:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Questo produrra' una release con l'asset `iptv-vod-downloader-windows-x64.zip`, da estrarre e avviare tramite `iptv-vod-downloader.exe`.
+
 ## Funzionalità principali
 
 - Configurazione di URL, username, password e cartella di download della lista IPTV.
@@ -36,4 +63,3 @@ python main.py
 - L'app supporta server IPTV con API Xtream Codes (`player_api.php`).
 - I download avvengono in sequenza per ridurre il carico sul server.
 - I dati di configurazione sono salvati in `~/.iptv_vod_downloader/config.json`.
-

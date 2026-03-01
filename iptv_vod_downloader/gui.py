@@ -45,7 +45,8 @@ class SeriesEpisodesDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(series.get("name", "Serie"))
         self.resizable(True, True)
-        self.geometry("700x500")
+        self.geometry("980x720")
+        self.minsize(900, 640)
         self.parent = parent
         self.client = client
         self.series = series
@@ -83,13 +84,12 @@ class SeriesEpisodesDialog(tk.Toplevel):
         tree_frame = ttk.Frame(content_frame)
         tree_frame.pack(side="left", expand=True, fill="both")
 
-        self.tree = ttk.Treeview(tree_frame, columns=("title", "season", "episode"), show="headings", selectmode="extended")
-        self.tree.heading("title", text="Episodio")
-        self.tree.heading("season", text="Stagione")
-        self.tree.heading("episode", text="Numero")
-        self.tree.column("title", width=420, anchor="w")
-        self.tree.column("season", width=80, anchor="center")
-        self.tree.column("episode", width=80, anchor="center")
+        self.tree = ttk.Treeview(tree_frame, columns=("episode", "title"), show="headings", selectmode="extended")
+        self.tree.heading("episode", text="Numero episodio")
+        self.tree.heading("title", text="Titolo episodio")
+        self.tree.column("episode", width=130, anchor="center", stretch=False)
+        self.tree.column("title", width=560, anchor="w")
+        self.tree.tag_configure("season_header", background="#e9edf2", font=("TkDefaultFont", 9, "bold"))
         self.tree.pack(expand=True, fill="both")
         self.tree.bind("<Button-3>", self._show_episode_menu)
 
@@ -145,6 +145,15 @@ class SeriesEpisodesDialog(tk.Toplevel):
                     season_num = int(season_key)
                 except (TypeError, ValueError):
                     season_num = 0
+                season_label = self._format_season_label(season_num)
+                season_header_id = f"season-header-{season_num}"
+                self.tree.insert(
+                    "",
+                    "end",
+                    iid=season_header_id,
+                    values=("", f"----- {season_label} -----"),
+                    tags=("season_header",),
+                )
                 sorted_eps = sorted(
                     episodes_list,
                     key=lambda ep: int(ep.get("episode_num", 0) or 0),
@@ -153,7 +162,7 @@ class SeriesEpisodesDialog(tk.Toplevel):
                     episode_id = str(episode.get("id"))
                     episode_num = int(episode.get("episode_num", 0) or 0)
                     title = episode.get("title") or episode.get("name") or f"Episodio {episode_num}"
-                    values = (title, season_num, episode_num)
+                    values = (episode_num, title)
                     self.tree.insert("", "end", iid=episode_id, values=values)
                     self.episodes_map[episode_id] = {
                         "season": season_num,
@@ -275,7 +284,7 @@ class SeriesEpisodesDialog(tk.Toplevel):
         return self._season_labels.get(self.season_var.get())
 
     def _select_all(self) -> None:
-        self.tree.selection_set(*self.tree.get_children())
+        self.tree.selection_set(*self.all_episode_ids)
 
     def _select_current_season(self) -> None:
         season = self._get_selected_season()
@@ -422,6 +431,7 @@ class IPTVApp(tk.Tk):
         self.queue_menu.add_command(label="Metti in pausa", command=self._pause_downloads)
         self.queue_menu.add_command(label="Ferma download", command=self._stop_downloads)
         self.queue_menu.add_separator()
+        self.queue_menu.add_command(label="Riprova download in errore", command=self._retry_selected_failed_downloads)
         self.queue_menu.add_command(label="Rimuovi selezionati", command=self._remove_selected_from_queue)
         self.queue_menu.add_command(label="Pulisci completati", command=self._clear_completed_downloads)
         self.queue_menu.add_separator()
@@ -433,6 +443,7 @@ class IPTVApp(tk.Tk):
         ttk.Button(queue_buttons, text="Avvia", command=self._start_downloads).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Pausa", command=self._pause_downloads).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Ferma", command=self._stop_downloads).pack(side="left", padx=5)
+        ttk.Button(queue_buttons, text="Riprova errori", command=self._retry_failed_downloads).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Pulisci completati", command=self._clear_completed_downloads).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Rimuovi selezionati", command=self._remove_selected_from_queue).pack(side="left", padx=5)
         ttk.Button(queue_buttons, text="Apri cartella download", command=self._open_download_folder).pack(side="right", padx=5)
@@ -476,8 +487,8 @@ class IPTVApp(tk.Tk):
 
         columns = ("title", "year")
         tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
-        tree.heading("title", text="Titolo")
-        tree.heading("year", text="Anno")
+        tree.heading("title", text="Titolo", command=lambda k=kind: self._set_catalog_sort(k, "Titolo"))
+        tree.heading("year", text="Anno", command=lambda k=kind: self._set_catalog_sort(k, "Anno"))
         tree.column("title", width=420, anchor="w")
         tree.column("year", width=120, anchor="center")
         tree.grid(row=1, column=0, sticky="nsew")
@@ -492,7 +503,7 @@ class IPTVApp(tk.Tk):
         context_menu.add_command(label="Aggiungi selezionati alla coda", command=lambda k=kind: self._add_selected_to_queue(k))
         tree.bind("<Button-3>", lambda event, m=context_menu, t=tree: self._show_tree_menu(event, t, m))
         if is_series:
-            tree.bind("<Double-1>", lambda _event: self._open_series_dialog())
+            tree.bind("<Double-1>", self._on_series_tree_double_click)
         setattr(self, f"{kind}_menu", context_menu)
 
         action_frame = ttk.Frame(content)
@@ -505,6 +516,9 @@ class IPTVApp(tk.Tk):
         setattr(self, f"{kind}_listbox", listbox)
         setattr(self, f"{kind}_tree", tree)
         setattr(self, f"{kind}_search_var", search_var)
+        setattr(self, f"{kind}_sort_mode", "Titolo")
+        setattr(self, f"{kind}_sort_desc", False)
+        self._update_catalog_headings(kind)
 
         return frame
 
@@ -639,6 +653,12 @@ class IPTVApp(tk.Tk):
         finally:
             menu.grab_release()
 
+    def _on_series_tree_double_click(self, event: tk.Event) -> None:
+        if self.series_tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.series_tree.identify_row(event.y):
+            self._open_series_dialog()
+
     def _show_queue_menu(self, event: tk.Event) -> None:
         iid = self.queue_tree.identify_row(event.y)
         if iid:
@@ -677,7 +697,6 @@ class IPTVApp(tk.Tk):
                     if match_search_term(search_term, item.get("name") or "")
                 ]
 
-            items.sort(key=lambda item: (item.get("name") or "").lower())
             self.after(0, lambda: self._populate_items(kind, items))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -690,7 +709,7 @@ class IPTVApp(tk.Tk):
     def _populate_items(self, kind: str, items: List[Dict[str, Any]]) -> None:
         tree: ttk.Treeview = getattr(self, f"{kind}_tree")
         tree.delete(*tree.get_children())
-        data_map: Dict[str, Dict[str, Any]] = {}
+        prepared_items: List[Dict[str, Any]] = []
 
         for item in items:
             if kind == "movies":
@@ -719,12 +738,79 @@ class IPTVApp(tk.Tk):
                 )
 
             name = item.get("name") or "Senza titolo"
+            item["display_year"] = year
+            item["_tree_identifier"] = identifier
+            prepared_items.append(item)
+
+        sorted_items = self._sort_catalog_items(kind, prepared_items)
+        data_map: Dict[str, Dict[str, Any]] = {}
+        for item in sorted_items:
+            identifier = str(item.pop("_tree_identifier"))
+            name = item.get("name") or "Senza titolo"
+            year = item.get("display_year", "")
             tree.insert("", "end", iid=identifier, values=(name, year))
             if year:
                 item["display_year"] = year
             data_map[identifier] = item
 
         self.items_map[kind] = data_map
+
+    def _sort_catalog_items(self, kind: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        sort_mode = getattr(self, f"{kind}_sort_mode")
+        sort_desc = getattr(self, f"{kind}_sort_desc")
+        if sort_mode == "Anno":
+            return sorted(
+                items,
+                key=lambda item: (
+                    int(item.get("display_year")) if str(item.get("display_year", "")).isdigit() else 0,
+                    (item.get("name") or "").lower(),
+                ),
+                reverse=sort_desc,
+            )
+        return sorted(
+            items,
+            key=lambda item: ((item.get("name") or "").lower(), item.get("display_year", "")),
+            reverse=sort_desc,
+        )
+
+    def _set_catalog_sort(self, kind: str, sort_mode: str) -> None:
+        current_mode = getattr(self, f"{kind}_sort_mode")
+        current_desc = getattr(self, f"{kind}_sort_desc")
+        if current_mode == sort_mode:
+            setattr(self, f"{kind}_sort_desc", not current_desc)
+        else:
+            setattr(self, f"{kind}_sort_mode", sort_mode)
+            setattr(self, f"{kind}_sort_desc", sort_mode == "Anno")
+        self._update_catalog_headings(kind)
+        self._apply_current_sort(kind)
+
+    def _update_catalog_headings(self, kind: str) -> None:
+        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        sort_mode = getattr(self, f"{kind}_sort_mode")
+        sort_desc = getattr(self, f"{kind}_sort_desc")
+        title_heading = "Titolo"
+        year_heading = "Anno"
+        if sort_mode == "Titolo":
+            title_heading = f"Titolo {'v' if sort_desc else '^'}"
+        elif sort_mode == "Anno":
+            year_heading = f"Anno {'v' if sort_desc else '^'}"
+        tree.heading("title", text=title_heading, command=lambda k=kind: self._set_catalog_sort(k, "Titolo"))
+        tree.heading("year", text=year_heading, command=lambda k=kind: self._set_catalog_sort(k, "Anno"))
+        return
+        title_heading = "Titolo"
+        year_heading = "Anno"
+        if sort_mode == "Titolo":
+            title_heading = "Titolo ▲"
+        elif sort_mode == "Anno":
+            year_heading = "Anno ▼"
+        tree.heading("title", text=title_heading, command=lambda k=kind: self._set_catalog_sort(k, "Titolo"))
+        tree.heading("year", text=year_heading, command=lambda k=kind: self._set_catalog_sort(k, "Anno"))
+
+    def _apply_current_sort(self, kind: str) -> None:
+        current_items = list(self.items_map.get(kind, {}).values())
+        if not current_items:
+            return
+        self._populate_items(kind, current_items)
 
     def _normalise_year(self, *values: Any) -> str:
         for value in values:
@@ -853,7 +939,18 @@ class IPTVApp(tk.Tk):
 
     def _queue_series_episodes(self, series: Dict[str, Any], episodes: List[Dict[str, Any]]) -> None:
         download_items: List[DownloadItem] = []
-        base_dir = Path(self.current_config.download_dir) / "Serie" / sanitise_filename(series.get("name") or f"Serie_{series.get('series_id')}")
+        series_name = series.get("name") or f"Serie_{series.get('series_id')}"
+        series_year = self._normalise_year(
+            series.get("display_year"),
+            series.get("year"),
+            series.get("releaseDate"),
+            series.get("releasedate"),
+            series.get("start"),
+        )
+        folder_name = sanitise_filename(series_name)
+        if series_year:
+            folder_name = f"{folder_name} ({series_year})"
+        base_dir = Path(self.current_config.download_dir) / "Serie" / folder_name
 
         for payload in episodes:
             episode = payload["episode"]
@@ -873,7 +970,8 @@ class IPTVApp(tk.Tk):
                 target_path=target_path,
                 kind="episode",
                 meta={
-                    "series": series.get("name"),
+                    "series": series_name,
+                    "series_year": series_year,
                     "season": season,
                     "episode": episode_num,
                 },
@@ -917,6 +1015,51 @@ class IPTVApp(tk.Tk):
     def _stop_downloads(self) -> None:
         self.download_manager.stop_all()
         self.status_var.set("Download fermati.")
+
+    def _retry_failed_downloads(self) -> None:
+        self._retry_queue_items(self.queue_items.keys(), require_selection=False)
+
+    def _retry_selected_failed_downloads(self) -> None:
+        self._retry_queue_items(self.queue_tree.selection(), require_selection=True)
+
+    def _retry_queue_items(self, queue_ids: Iterable[str], require_selection: bool) -> None:
+        retry_items: List[DownloadItem] = []
+        for queue_id in queue_ids:
+            item = self.queue_items.get(queue_id)
+            if not item or item.get("status") != "failed":
+                continue
+            retry_item = self._build_retry_download_item(item)
+            if retry_item:
+                retry_items.append(retry_item)
+
+        if not retry_items:
+            if require_selection:
+                messagebox.showinfo("Nessun errore selezionato", "Seleziona almeno un download in errore da riprovare.")
+            else:
+                messagebox.showinfo("Nessun errore", "Non ci sono download in errore da riprovare.")
+            return
+
+        self.download_manager.add_items(retry_items)
+        total = len(retry_items)
+        self.status_var.set(f"Rimessi in coda {total} download in errore.")
+
+    def _build_retry_download_item(self, item: Dict[str, Any]) -> Optional[DownloadItem]:
+        stream_url = item.get("stream_url")
+        target_path = item.get("target_path")
+        queue_id = item.get("queue_id")
+        item_id = item.get("item_id")
+        if not stream_url or not target_path or not queue_id or not item_id:
+            return None
+
+        return DownloadItem(
+            item_id=str(item_id),
+            title=item.get("title", "Download"),
+            stream_url=str(stream_url),
+            target_path=Path(str(target_path)),
+            kind=str(item.get("kind", "movie")),
+            meta=dict(item.get("meta") or {}),
+            queue_id=str(queue_id),
+        )
 
     def _clear_completed_downloads(self) -> None:
         to_remove = [queue_id for queue_id, item in self.queue_items.items() if item.get("status") == "completed"]

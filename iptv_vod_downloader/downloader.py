@@ -36,6 +36,7 @@ class DownloadItem:
         return {
             "item_id": self.item_id,
             "title": self.title,
+            "stream_url": self.stream_url,
             "target_path": str(self.target_path),
             "kind": self.kind,
             "status": self.status,
