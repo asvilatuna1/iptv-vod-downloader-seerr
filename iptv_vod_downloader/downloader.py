@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, List, Optional
@@ -47,6 +48,14 @@ class DownloadItem:
         }
 
 
+class DownloadCancelled(RuntimeError):
+    """Raised when a single queued download is cancelled by the user."""
+
+
+class DownloadStopped(RuntimeError):
+    """Raised when the active download is stopped by the user."""
+
+
 class DownloadManager:
     """Simple serial download worker."""
 
@@ -61,6 +70,7 @@ class DownloadManager:
         self._worker: Optional[threading.Thread] = None
         self._callback = callback
         self._current_item: Optional[DownloadItem] = None
+        self._cancelled_queue_ids: set[str] = set()
 
     def start(self) -> None:
         if self._worker and self._worker.is_alive():
@@ -103,13 +113,13 @@ class DownloadManager:
             queued = list(self._queue)
             self._queue.clear()
         for item in queued:
-            item.status = "cancelled"
+            item.status = "stopped"
             item.error = "stopped by user"
             self._notify(item)
 
         current = self._current_item
         if current and current.status in {"downloading", "paused"}:
-            current.status = "failed"
+            current.status = "stopped"
             current.error = "stopped by user"
             self._notify(current)
 
@@ -130,11 +140,15 @@ class DownloadManager:
     def remove_item(self, queue_id: str) -> bool:
         with self._lock:
             for idx, item in enumerate(self._queue):
-                if item.queue_id == queue_id and item.status == "queued":
+                if item.queue_id == queue_id and item.status in {"queued", "paused"}:
                     del self._queue[idx]
                     item.status = "removed"
                     self._notify(item)
                     return True
+            current = self._current_item
+            if current and current.queue_id == queue_id and current.status in {"downloading", "paused"}:
+                self._cancelled_queue_ids.add(queue_id)
+                return True
         return False
 
     def queued_items(self) -> List[DownloadItem]:
@@ -168,13 +182,13 @@ class DownloadManager:
 
     def _download_item(self, session: requests.Session, item: DownloadItem) -> None:
         item.status = "downloading"
-        item.progress = 0.0
         item.error = None
         self._notify(item)
 
         target = item.target_path
         ensure_directory(target.parent)
         temp_path = target.with_suffix(target.suffix + ".part")
+        existing_size = temp_path.stat().st_size if temp_path.exists() else 0
 
         if target.exists():
             item.status = "completed"
@@ -185,18 +199,34 @@ class DownloadManager:
             return
 
         try:
-            with session.get(item.stream_url, stream=True, timeout=(5, 300)) as resp:
+            request_headers: dict[str, str] = {}
+            if existing_size:
+                request_headers["Range"] = f"bytes={existing_size}-"
+            with session.get(item.stream_url, stream=True, timeout=(5, 300), headers=request_headers) as resp:
                 resp.raise_for_status()
-                total = int(resp.headers.get("Content-Length") or 0)
-                downloaded = 0
+                total = self._resolve_total_size(resp, existing_size)
+                downloaded = existing_size
                 chunk_size = 1024 * 512  # 512 KiB
 
-                with temp_path.open("wb") as fh:
+                file_mode = "ab" if existing_size and resp.status_code == 206 else "wb"
+                if file_mode == "wb":
+                    downloaded = 0
+                    existing_size = 0
+
+                if total:
+                    item.progress = min(0.99, downloaded / total)
+                    self._notify(item)
+
+                with temp_path.open(file_mode) as fh:
                     start_time = time.time()
                     for chunk in resp.iter_content(chunk_size=chunk_size):
                         if self._stop_event.is_set():
-                            raise RuntimeError("Download stopped by user.")
+                            raise DownloadStopped("Download stopped by user.")
+                        if item.queue_id in self._cancelled_queue_ids:
+                            raise DownloadCancelled("Download cancelled by user.")
                         while self._paused and not self._stop_event.is_set():
+                            if item.queue_id in self._cancelled_queue_ids:
+                                raise DownloadCancelled("Download cancelled by user.")
                             item.status = "paused"
                             self._notify(item)
                             self._pause_event.wait(timeout=0.2)
@@ -218,17 +248,43 @@ class DownloadManager:
             temp_path.replace(target)
             item.status = "completed"
             item.progress = 1.0
+            item.error = None
             self._notify(item)
-        except Exception as exc:  # pragma: no cover - runtime safeguard
-            item.status = "failed"
+        except DownloadCancelled as exc:
+            item.status = "cancelled"
             item.error = str(exc)
             item.progress = 0.0
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)
             self._notify(item)
+        except DownloadStopped as exc:
+            item.status = "stopped"
+            item.error = str(exc)
+            self._notify(item)
+        except Exception as exc:  # pragma: no cover - runtime safeguard
+            item.status = "failed"
+            item.error = str(exc)
+            self._notify(item)
         finally:
+            with suppress(KeyError):
+                self._cancelled_queue_ids.remove(item.queue_id)
             self._current_item = None
 
     def _notify(self, item: DownloadItem) -> None:
         if self._callback:
             self._callback(item)
+
+    @staticmethod
+    def _resolve_total_size(resp: requests.Response, existing_size: int) -> int:
+        content_range = resp.headers.get("Content-Range", "")
+        if "/" in content_range:
+            tail = content_range.rsplit("/", 1)[-1]
+            if tail.isdigit():
+                return int(tail)
+        content_length = resp.headers.get("Content-Length")
+        if content_length and content_length.isdigit():
+            length = int(content_length)
+            if resp.status_code == 206:
+                return existing_size + length
+            return length
+        return 0

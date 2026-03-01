@@ -1,14 +1,16 @@
-"""Configuration helpers for the IPTV VOD downloader."""
+"""Configuration helpers and persisted UI state for the IPTV VOD downloader."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 CONFIG_DIR = Path.home() / ".iptv_vod_downloader"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+QUEUE_STATE_FILE = CONFIG_DIR / "queue_state.json"
+UI_STATE_FILE = CONFIG_DIR / "ui_state.json"
 
 
 @dataclass
@@ -73,3 +75,64 @@ class ConfigManager:
         self._config = AppConfig(**data)
         self.save()
         return self._config
+
+
+@dataclass
+class WindowState:
+    """Persisted window and UI preferences."""
+
+    geometry: str = "1200x800"
+    selected_tab: str = "movies"
+    queue_filter: str = "Tutti"
+    queue_sort: str = "Inserimento"
+
+
+class JSONStateManager:
+    """Small JSON-backed state store."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def load(self, default: Any) -> Any:
+        if not self.path.exists():
+            return default
+        try:
+            with self.path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return default
+
+    def save(self, payload: Any) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+
+
+class QueueStateManager(JSONStateManager):
+    """Persist visible queue entries between app launches."""
+
+    def __init__(self, path: Path = QUEUE_STATE_FILE) -> None:
+        super().__init__(path)
+
+    def load_items(self) -> List[Dict[str, Any]]:
+        data = self.load(default=[])
+        return data if isinstance(data, list) else []
+
+    def save_items(self, items: List[Dict[str, Any]]) -> None:
+        self.save(items)
+
+
+class UIStateManager(JSONStateManager):
+    """Persist window geometry and simple UI preferences."""
+
+    def __init__(self, path: Path = UI_STATE_FILE) -> None:
+        super().__init__(path)
+
+    def load_state(self) -> WindowState:
+        data = self.load(default={})
+        if not isinstance(data, dict):
+            return WindowState()
+        return WindowState(**{**asdict(WindowState()), **data})
+
+    def save_state(self, state: WindowState) -> None:
+        self.save(asdict(state))

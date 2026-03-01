@@ -1,65 +1,129 @@
 # IPTV VOD Downloader
 
-Applicazione desktop in Python per esplorare e scaricare i contenuti VOD (film e serie TV) forniti da server IPTV compatibili con Xtream Codes.
+Desktop application written in Python for browsing and downloading VOD content from IPTV providers compatible with the Xtream Codes API.
 
-## Requisiti
+## Features
 
-- Python 3.9 o successivo
-- Dipendenze Python: `requests`
+- Save IPTV connection settings locally.
+- Test server credentials before loading the catalog.
+- Browse movie and TV series categories.
+- Search results by title.
+- Sort catalog results by title or year.
+- Queue movies directly from the main catalog.
+- Open a dedicated episode browser for TV series.
+- Queue a full season, selected episodes, or an entire series.
+- Maintain a download queue with:
+  - graphical progress bars with percentage labels
+  - retry for failed downloads
+  - queue filtering and sorting
+  - persisted queue state across app restarts
+- Highlight items that are already downloaded or already queued.
+- Organize downloads automatically into portable English folder names:
+  - `Movies/`
+  - `Series/<Series Name (Year)>/Season XX/`
 
-Installa i requisiti con:
+## Requirements
+
+- Python 3.9 or newer
+- Windows is the primary target for the packaged build
+
+Install dependencies with:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Avvio
+## Run From Source
 
 ```bash
 python main.py
 ```
 
-## Build eseguibile
+Application data is stored under:
 
-Per generare un `.exe` Windows in locale:
+```text
+~/.iptv_vod_downloader/
+```
+
+That folder contains:
+
+- `config.json`: saved IPTV connection settings
+- `queue_state.json`: persisted queue entries
+- `ui_state.json`: saved window/UI preferences
+- `app.log`: runtime log file
+
+## How It Works
+
+1. Enter the IPTV server URL, username, password, and download folder.
+2. Click `Test connection` to validate credentials.
+3. Click `Refresh catalog` to load movies and series.
+4. Queue movies directly from the catalog, or open a series to select episodes.
+5. Use the download queue to start, pause, stop, retry, filter, or remove items.
+
+## Download Behavior
+
+- Downloads are processed sequentially.
+- Existing completed files are treated as already downloaded.
+- Partial `.part` files are reused when the server supports ranged downloads.
+- Duplicate queue entries are skipped based on target path and item identity.
+
+## Local Build
+
+To generate a local portable Windows build:
 
 ```bash
 pip install -r requirements.txt pyinstaller
 pyinstaller --noconfirm --clean --onedir --windowed --name iptv-vod-downloader main.py
 ```
 
-Verrà creata una cartella portable in `dist/iptv-vod-downloader/` contenente l'eseguibile e le dipendenze necessarie.
+This creates a portable folder in:
 
-## Release automatiche
+```text
+dist/iptv-vod-downloader/
+```
 
-Il repository include una pipeline GitHub Actions in `.github/workflows/build-release.yml` che:
+Run:
 
-- su push a `main` o avvio manuale genera un artifact scaricabile con l'eseguibile Windows;
-- su push di un tag `v*` genera uno zip della cartella portable Windows e lo pubblica in GitHub Releases.
+```text
+dist/iptv-vod-downloader/iptv-vod-downloader.exe
+```
 
-Esempio:
+## GitHub Actions Release Pipeline
+
+The repository includes a GitHub Actions workflow in:
+
+```text
+.github/workflows/build-release.yml
+```
+
+Behavior:
+
+- Push to `main`: builds a Windows portable artifact
+- Manual workflow run: builds a Windows portable artifact
+- Push a tag matching `v*`: builds a portable ZIP and publishes it to GitHub Releases
+
+Example:
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Questo produrra' una release con l'asset `iptv-vod-downloader-windows-x64.zip`, da estrarre e avviare tramite `iptv-vod-downloader.exe`.
+That creates a release asset named:
 
-## Funzionalità principali
+```text
+iptv-vod-downloader-windows-x64.zip
+```
 
-- Configurazione di URL, username, password e cartella di download della lista IPTV.
-- Navigazione per categoria dei film e delle serie VOD.
-- Ricerca testuale tra i titoli correnti.
-- Selezione multipla dei film e aggiunta alla coda di download.
-- Gestione delle serie tramite finestra dedicata per scegliere le singole puntate.
-- Gestione della coda con stato e progressione dei download.
-- Organizzazione automatica dei file scaricati:
-  - Film salvati nella sottocartella `Film`.
-  - Serie salvate in `Serie/<Nome Serie>/Stagione XX/`.
+Extract the ZIP and launch:
 
-## Note
+```text
+iptv-vod-downloader.exe
+```
 
-- L'app supporta server IPTV con API Xtream Codes (`player_api.php`).
-- I download avvengono in sequenza per ridurre il carico sul server.
-- I dati di configurazione sono salvati in `~/.iptv_vod_downloader/config.json`.
+## Notes
+
+- The app targets Xtream Codes compatible endpoints exposed through `player_api.php`.
+- Posters are downloaded when available for series episode browsing.
+- The UI is implemented with Tkinter.
+- The project currently uses a single download worker by design.
