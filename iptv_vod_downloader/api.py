@@ -1,4 +1,4 @@
-"""Client helpers for interacting with Xtream Codes compatible IPTV APIs."""
+"""Client helpers for interacting with Xtream Codes compatible IPTV APIs and Seerr."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DEFAULT_HEADERS = {
 
 
 class APIError(RuntimeError):
-    """Raised when the IPTV API returns an unexpected payload."""
+    """Raised when the API returns an unexpected payload."""
 
 
 def _normalise_base_url(url: str) -> str:
@@ -32,11 +32,34 @@ def _normalise_base_url(url: str) -> str:
         url = url[: -len("/player_api.php")]
     return url.rstrip("/")
 
+# NUEVA CLASE: Cliente de Jellyseerr
+class SeerrClient:
+    def __init__(self, base_url: str, api_key: str) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self._session = requests.Session()
+        self._session.headers.update({"X-Api-Key": self.api_key, "Accept": "application/json"})
+        self.timeout = 5
+
+    def check_availability(self, tmdb_id: int, media_type: str) -> bool:
+        if not tmdb_id:
+            return False
+        try:
+            url = f"{self.base_url}/api/v1/{media_type}/{tmdb_id}"
+            resp = self._session.get(url, timeout=self.timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                media_info = data.get("mediaInfo", {})
+                return media_info.get("status") in [4, 5]
+            return False
+        except Exception:
+            return False
+
 
 class IPTVClient:
     """Wraps common Xtream Codes VOD and series endpoints."""
 
-    def __init__(self, base_url: str, username: str, password: str) -> None:
+    def __init__(self, base_url: str, username: str, password: str, seerr_url: Optional[str] = None, seerr_key: Optional[str] = None) -> None:
         self.base_url = _normalise_base_url(base_url)
         self.username = username
         self.password = password
@@ -44,6 +67,11 @@ class IPTVClient:
         self._session = requests.Session()
         self._session.headers.update(DEFAULT_HEADERS)
         self.timeout = (5, 60)
+        
+        # Inicializar Seerr si se configuró
+        self.seerr = None
+        if seerr_url and seerr_key:
+            self.seerr = SeerrClient(seerr_url, seerr_key)
 
     def _request(self, **params: Any) -> Any:
         payload = {
@@ -85,6 +113,13 @@ class IPTVClient:
         data = self._request(**params)
         if not isinstance(data, list):
             raise APIError("Unexpected payload for VOD streams.")
+            
+        # NUEVO: Comprobar en Seerr
+        if self.seerr:
+            for item in data:
+                tmdb_id = item.get("tmdb_id")
+                item["exists_in_seerr"] = self.seerr.check_availability(tmdb_id, "movie") if tmdb_id else False
+                
         return data
 
     def get_vod_info(self, stream_id: str) -> Dict[str, Any]:
@@ -106,6 +141,13 @@ class IPTVClient:
         data = self._request(**params)
         if not isinstance(data, list):
             raise APIError("Unexpected payload for series list.")
+            
+        # NUEVO: Comprobar en Seerr
+        if self.seerr:
+            for item in data:
+                tmdb_id = item.get("tmdb_id")
+                item["exists_in_seerr"] = self.seerr.check_availability(tmdb_id, "tv") if tmdb_id else False
+                
         return data
 
     def get_series_info(self, series_id: str) -> Dict[str, Any]:
@@ -123,7 +165,6 @@ class IPTVClient:
         return f"{self.base_url}/series/{self.username}/{self.password}/{episode_id}.{ext}"
 
     def fetch_resource(self, url: str) -> bytes:
-        """Download a binary resource using the authenticated session."""
         resp = self._session.get(url, timeout=self.timeout)
         resp.raise_for_status()
         return resp.content
