@@ -380,7 +380,7 @@ class IPTVApp(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        self.config_frame = ttk.LabelFrame(self, text="IPTV Connection")
+        self.config_frame = ttk.LabelFrame(self, text="IPTV Connection & Seerr")
         self.config_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         for col in range(6):
             self.config_frame.columnconfigure(col, weight=1 if col % 2 == 1 else 0)
@@ -389,26 +389,38 @@ class IPTVApp(tk.Tk):
         self.username_var = tk.StringVar()
         self.password_var = tk.StringVar()
         self.download_dir_var = tk.StringVar()
+        self.seerr_url_var = tk.StringVar()      # NUEVO
+        self.seerr_key_var = tk.StringVar()      # NUEVO
         self.status_var = tk.StringVar()
 
+        # Fila 0: IPTV
         ttk.Label(self.config_frame, text="URL").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.base_url_var).grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
 
+        # Fila 1: Credenciales IPTV
         ttk.Label(self.config_frame, text="Username").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.username_var).grid(row=1, column=1, sticky="ew", padx=5, pady=5)
-
         ttk.Label(self.config_frame, text="Password").grid(row=1, column=2, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.password_var, show="*").grid(row=1, column=3, sticky="ew", padx=5, pady=5)
 
+        # Fila 2: Descargas
         ttk.Label(self.config_frame, text="Download folder").grid(row=2, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.download_dir_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
         ttk.Button(self.config_frame, text="Browse", command=self._choose_download_dir).grid(row=2, column=3, sticky="ew", padx=5, pady=5)
 
-        ttk.Button(self.config_frame, text="Save settings", command=self._save_config).grid(row=0, column=3, sticky="ew", padx=5, pady=5)
-        ttk.Button(self.config_frame, text="Test connection", command=self._test_connection).grid(row=1, column=4, sticky="ew", padx=5, pady=5)
-        ttk.Button(self.config_frame, text="Refresh catalog", command=self.refresh_catalog).grid(row=0, column=4, sticky="ew", padx=5, pady=5)
+        # Fila 3: NUEVO - Configuración Seerr
+        ttk.Label(self.config_frame, text="Seerr URL").grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(self.config_frame, textvariable=self.seerr_url_var).grid(row=3, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
+        ttk.Label(self.config_frame, text="Seerr API").grid(row=3, column=2, sticky="w", padx=5, pady=5)
+        ttk.Entry(self.config_frame, textvariable=self.seerr_key_var).grid(row=3, column=3, sticky="ew", padx=5, pady=5)
 
-        ttk.Label(self.config_frame, textvariable=self.status_var, foreground="gray").grid(row=3, column=0, columnspan=5, sticky="w", padx=5, pady=5)
+        # Botones movidos a la derecha
+        ttk.Button(self.config_frame, text="Save settings", command=self._save_config).grid(row=0, column=4, sticky="ew", padx=5, pady=5)
+        ttk.Button(self.config_frame, text="Test connection", command=self._test_connection).grid(row=1, column=4, sticky="ew", padx=5, pady=5)
+        ttk.Button(self.config_frame, text="Refresh catalog", command=self.refresh_catalog).grid(row=2, column=4, sticky="ew", padx=5, pady=5)
+
+        # Fila 4: Status
+        ttk.Label(self.config_frame, textvariable=self.status_var, foreground="gray").grid(row=4, column=0, columnspan=5, sticky="w", padx=5, pady=5)
 
         self.main_pane = ttk.Panedwindow(self, orient="vertical")
         self.main_pane.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
@@ -695,16 +707,20 @@ class IPTVApp(tk.Tk):
     # ------------------------------------------------------------------
     # Config handling
 
-    def _load_config_into_form(self) -> None:
-        self.base_url_var.set(self.current_config.base_url)
-        self.username_var.set(self.current_config.username)
-        self.password_var.set(self.current_config.password)
-        self.download_dir_var.set(self.current_config.download_dir)
+    
 
     def _choose_download_dir(self) -> None:
         directory = filedialog.askdirectory(initialdir=self.download_dir_var.get() or str(Path.home()))
         if directory:
             self.download_dir_var.set(directory)
+
+    def _load_config_into_form(self) -> None:
+        self.base_url_var.set(self.current_config.base_url)
+        self.username_var.set(self.current_config.username)
+        self.password_var.set(self.current_config.password)
+        self.download_dir_var.set(self.current_config.download_dir)
+        self.seerr_url_var.set(self.current_config.seerr_url)      # NUEVO
+        self.seerr_key_var.set(self.current_config.seerr_api_key)  # NUEVO
 
     def _save_config(self) -> None:
         download_dir = self.download_dir_var.get().strip()
@@ -716,6 +732,8 @@ class IPTVApp(tk.Tk):
             username=self.username_var.get().strip(),
             password=self.password_var.get().strip(),
             download_dir=download_dir,
+            seerr_url=self.seerr_url_var.get().strip(),      # NUEVO
+            seerr_api_key=self.seerr_key_var.get().strip()   # NUEVO
         )
         self.config_manager.save(config)
         self.current_config = config
@@ -732,6 +750,8 @@ class IPTVApp(tk.Tk):
                 self.current_config.base_url,
                 self.current_config.username,
                 self.current_config.password,
+                seerr_url=self.current_config.seerr_url,     # NUEVO
+                seerr_key=self.current_config.seerr_api_key  # NUEVO
             )
             return True
         except Exception as exc:  # pragma: no cover - runtime safeguard
@@ -901,36 +921,36 @@ class IPTVApp(tk.Tk):
         prepared_items: List[Dict[str, Any]] = []
 
         for item in items:
+            # (El código de validación de identifier y year se mantiene igual)
             if kind == "movies":
                 identifier = str(item.get("stream_id"))
                 info = item.get("info") if isinstance(item.get("info"), dict) else None
                 year = self._normalise_year(
-                    item.get("year"),
-                    item.get("releasedate"),
-                    item.get("releaseDate"),
-                    item.get("release_date"),
-                    info.get("year") if info else None,
-                    info.get("releasedate") if info else None,
-                    info.get("releaseDate") if info else None,
+                    item.get("year"), item.get("releasedate"), item.get("releaseDate"),
+                    item.get("release_date"), info.get("year") if info else None,
+                    info.get("releasedate") if info else None, info.get("releaseDate") if info else None,
                 )
             else:
                 identifier = str(item.get("series_id"))
                 info = item.get("info") if isinstance(item.get("info"), dict) else None
                 year = self._normalise_year(
-                    item.get("releaseDate"),
-                    item.get("releasedate"),
-                    item.get("start"),
-                    item.get("year"),
-                    info.get("releasedate") if info else None,
-                    info.get("releaseDate") if info else None,
-                    info.get("year") if info else None,
+                    item.get("releaseDate"), item.get("releasedate"), item.get("start"),
+                    item.get("year"), info.get("releasedate") if info else None,
+                    info.get("releaseDate") if info else None, info.get("year") if info else None,
                 )
 
             name = item.get("name") or "Untitled"
+            
+            # NUEVO: Si existe en Seerr, añadir el indicador visual
+            if item.get("exists_in_seerr"):
+                name = f"✅ {name}"
+
             item["display_year"] = year
             item["_tree_identifier"] = identifier
+            item["name"] = name  # Guardamos el nombre modificado
             prepared_items.append(item)
 
+        # (El resto del método se mantiene exactamente igual para ordenar e insertar)
         sorted_items = self._sort_catalog_items(kind, prepared_items)
         data_map: Dict[str, Dict[str, Any]] = {}
         for item in sorted_items:
@@ -938,6 +958,11 @@ class IPTVApp(tk.Tk):
             name = item.get("name") or "Untitled"
             year = item.get("display_year", "")
             tags = self._catalog_item_tags(kind, item)
+            
+            # Si el item ya está en seerr, le ponemos color verde a la fila
+            if "✅" in name:
+                tags = tags + ("downloaded_item",)
+                
             tree.insert("", "end", iid=identifier, values=(name, year), tags=tags)
             if year:
                 item["display_year"] = year
