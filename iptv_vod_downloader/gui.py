@@ -258,8 +258,6 @@ class SeriesEpisodesDialog(tk.Toplevel):
         self.callback(payloads)
         self.destroy()
 
-    # Helpers ----------------------------------------------------------
-
     @staticmethod
     def _format_season_label(season: int) -> str:
         return "Specials" if season <= 0 else f"Season {season:02d}"
@@ -389,37 +387,32 @@ class IPTVApp(tk.Tk):
         self.username_var = tk.StringVar()
         self.password_var = tk.StringVar()
         self.download_dir_var = tk.StringVar()
-        self.seerr_url_var = tk.StringVar()      # NUEVO
-        self.seerr_key_var = tk.StringVar()      # NUEVO
+        self.seerr_url_var = tk.StringVar()
+        self.seerr_key_var = tk.StringVar()
         self.status_var = tk.StringVar()
 
-        # Fila 0: IPTV
         ttk.Label(self.config_frame, text="URL").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.base_url_var).grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
 
-        # Fila 1: Credenciales IPTV
         ttk.Label(self.config_frame, text="Username").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.username_var).grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+
         ttk.Label(self.config_frame, text="Password").grid(row=1, column=2, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.password_var, show="*").grid(row=1, column=3, sticky="ew", padx=5, pady=5)
 
-        # Fila 2: Descargas
         ttk.Label(self.config_frame, text="Download folder").grid(row=2, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.download_dir_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
         ttk.Button(self.config_frame, text="Browse", command=self._choose_download_dir).grid(row=2, column=3, sticky="ew", padx=5, pady=5)
 
-        # Fila 3: NUEVO - Configuración Seerr
         ttk.Label(self.config_frame, text="Seerr URL").grid(row=3, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.seerr_url_var).grid(row=3, column=1, columnspan=2, sticky="ew", padx=5, pady=5)
         ttk.Label(self.config_frame, text="Seerr API").grid(row=3, column=2, sticky="w", padx=5, pady=5)
         ttk.Entry(self.config_frame, textvariable=self.seerr_key_var).grid(row=3, column=3, sticky="ew", padx=5, pady=5)
 
-        # Botones movidos a la derecha
         ttk.Button(self.config_frame, text="Save settings", command=self._save_config).grid(row=0, column=4, sticky="ew", padx=5, pady=5)
         ttk.Button(self.config_frame, text="Test connection", command=self._test_connection).grid(row=1, column=4, sticky="ew", padx=5, pady=5)
         ttk.Button(self.config_frame, text="Refresh catalog", command=self.refresh_catalog).grid(row=2, column=4, sticky="ew", padx=5, pady=5)
 
-        # Fila 4: Status
         ttk.Label(self.config_frame, textvariable=self.status_var, foreground="gray").grid(row=4, column=0, columnspan=5, sticky="w", padx=5, pady=5)
 
         self.main_pane = ttk.Panedwindow(self, orient="vertical")
@@ -587,6 +580,11 @@ class IPTVApp(tk.Tk):
             context_menu.add_command(label="Open series", command=self._open_series_dialog)
             context_menu.add_command(label="Queue full series", command=self._queue_entire_selected_series)
         context_menu.add_command(label="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k))
+        
+        # NUEVO: Boton en clic derecho
+        context_menu.add_separator()
+        context_menu.add_command(label="Search in Seerr", command=lambda k=kind: self._search_in_seerr(k))
+
         tree.bind("<Button-3>", lambda event, m=context_menu, t=tree: self._show_tree_menu(event, t, m))
         if is_series:
             tree.bind("<Double-1>", self._on_series_tree_double_click)
@@ -707,20 +705,18 @@ class IPTVApp(tk.Tk):
     # ------------------------------------------------------------------
     # Config handling
 
-    
-
-    def _choose_download_dir(self) -> None:
-        directory = filedialog.askdirectory(initialdir=self.download_dir_var.get() or str(Path.home()))
-        if directory:
-            self.download_dir_var.set(directory)
-
     def _load_config_into_form(self) -> None:
         self.base_url_var.set(self.current_config.base_url)
         self.username_var.set(self.current_config.username)
         self.password_var.set(self.current_config.password)
         self.download_dir_var.set(self.current_config.download_dir)
-        self.seerr_url_var.set(self.current_config.seerr_url)      # NUEVO
-        self.seerr_key_var.set(self.current_config.seerr_api_key)  # NUEVO
+        self.seerr_url_var.set(self.current_config.seerr_url)
+        self.seerr_key_var.set(self.current_config.seerr_api_key)
+
+    def _choose_download_dir(self) -> None:
+        directory = filedialog.askdirectory(initialdir=self.download_dir_var.get() or str(Path.home()))
+        if directory:
+            self.download_dir_var.set(directory)
 
     def _save_config(self) -> None:
         download_dir = self.download_dir_var.get().strip()
@@ -732,8 +728,8 @@ class IPTVApp(tk.Tk):
             username=self.username_var.get().strip(),
             password=self.password_var.get().strip(),
             download_dir=download_dir,
-            seerr_url=self.seerr_url_var.get().strip(),      # NUEVO
-            seerr_api_key=self.seerr_key_var.get().strip()   # NUEVO
+            seerr_url=self.seerr_url_var.get().strip(),
+            seerr_api_key=self.seerr_key_var.get().strip()
         )
         self.config_manager.save(config)
         self.current_config = config
@@ -750,8 +746,8 @@ class IPTVApp(tk.Tk):
                 self.current_config.base_url,
                 self.current_config.username,
                 self.current_config.password,
-                seerr_url=self.current_config.seerr_url,     # NUEVO
-                seerr_key=self.current_config.seerr_api_key  # NUEVO
+                seerr_url=self.current_config.seerr_url,
+                seerr_key=self.current_config.seerr_api_key
             )
             return True
         except Exception as exc:  # pragma: no cover - runtime safeguard
@@ -921,36 +917,36 @@ class IPTVApp(tk.Tk):
         prepared_items: List[Dict[str, Any]] = []
 
         for item in items:
-            # (El código de validación de identifier y year se mantiene igual)
             if kind == "movies":
                 identifier = str(item.get("stream_id"))
                 info = item.get("info") if isinstance(item.get("info"), dict) else None
                 year = self._normalise_year(
-                    item.get("year"), item.get("releasedate"), item.get("releaseDate"),
-                    item.get("release_date"), info.get("year") if info else None,
-                    info.get("releasedate") if info else None, info.get("releaseDate") if info else None,
+                    item.get("year"),
+                    item.get("releasedate"),
+                    item.get("releaseDate"),
+                    item.get("release_date"),
+                    info.get("year") if info else None,
+                    info.get("releasedate") if info else None,
+                    info.get("releaseDate") if info else None,
                 )
             else:
                 identifier = str(item.get("series_id"))
                 info = item.get("info") if isinstance(item.get("info"), dict) else None
                 year = self._normalise_year(
-                    item.get("releaseDate"), item.get("releasedate"), item.get("start"),
-                    item.get("year"), info.get("releasedate") if info else None,
-                    info.get("releaseDate") if info else None, info.get("year") if info else None,
+                    item.get("releaseDate"),
+                    item.get("releasedate"),
+                    item.get("start"),
+                    item.get("year"),
+                    info.get("releasedate") if info else None,
+                    info.get("releaseDate") if info else None,
+                    info.get("year") if info else None,
                 )
 
             name = item.get("name") or "Untitled"
-            
-            # NUEVO: Si existe en Seerr, añadir el indicador visual
-            if item.get("exists_in_seerr"):
-                name = f"✅ {name}"
-
             item["display_year"] = year
             item["_tree_identifier"] = identifier
-            item["name"] = name  # Guardamos el nombre modificado
             prepared_items.append(item)
 
-        # (El resto del método se mantiene exactamente igual para ordenar e insertar)
         sorted_items = self._sort_catalog_items(kind, prepared_items)
         data_map: Dict[str, Dict[str, Any]] = {}
         for item in sorted_items:
@@ -958,11 +954,6 @@ class IPTVApp(tk.Tk):
             name = item.get("name") or "Untitled"
             year = item.get("display_year", "")
             tags = self._catalog_item_tags(kind, item)
-            
-            # Si el item ya está en seerr, le ponemos color verde a la fila
-            if "✅" in name:
-                tags = tags + ("downloaded_item",)
-                
             tree.insert("", "end", iid=identifier, values=(name, year), tags=tags)
             if year:
                 item["display_year"] = year
@@ -1014,15 +1005,6 @@ class IPTVApp(tk.Tk):
             title_heading = f"Title {'v' if sort_desc else '^'}"
         elif sort_mode == "Year":
             year_heading = f"Year {'v' if sort_desc else '^'}"
-        tree.heading("title", text=title_heading, command=lambda k=kind: self._set_catalog_sort(k, "Title"))
-        tree.heading("year", text=year_heading, command=lambda k=kind: self._set_catalog_sort(k, "Year"))
-        return
-        title_heading = "Title"
-        year_heading = "Year"
-        if sort_mode == "Title":
-            title_heading = "Title ^"
-        elif sort_mode == "Year":
-            year_heading = "Year v"
         tree.heading("title", text=title_heading, command=lambda k=kind: self._set_catalog_sort(k, "Title"))
         tree.heading("year", text=year_heading, command=lambda k=kind: self._set_catalog_sort(k, "Year"))
 
@@ -1255,15 +1237,12 @@ class IPTVApp(tk.Tk):
             target.mkdir(parents=True, exist_ok=True)
             if sys.platform.startswith("win"):
                 import os
-
                 os.startfile(target)  # type: ignore[attr-defined]
             elif sys.platform == "darwin":  # pragma: no cover - platform specific
                 import subprocess
-
                 subprocess.Popen(["open", str(target)])
             else:  # pragma: no cover - platform specific
                 import subprocess
-
                 subprocess.Popen(["xdg-open", str(target)])
         except Exception as exc:  # pragma: no cover - runtime safeguard
             messagebox.showerror("Error", f"Unable to open the folder:\n{exc}")
@@ -1323,7 +1302,11 @@ class IPTVApp(tk.Tk):
 
                 meta_info = info.get("info", {}) if isinstance(info.get("info"), dict) else {}
                 extension = meta_info.get("container_extension") or stream.get("container_extension") or "mp4"
-                title = stream.get("name") or f"Movie {stream['stream_id']}"
+                
+                # Respetamos el nombre limpio si le hicimos la busqueda de Seerr
+                clean_title = re.sub(r'^\[(OK|MISS)\]\s*', '', stream.get("name") or "")
+                title = clean_title or f"Movie {stream['stream_id']}"
+                
                 year_value = self._normalise_year(
                     stream.get("display_year"),
                     stream.get("year"),
@@ -1364,7 +1347,6 @@ class IPTVApp(tk.Tk):
                     + (f" Skipped {skipped_duplicates} duplicates." if skipped_duplicates else "")
                 )
         else:
-            # For series we open the episodes dialog
             if len(selection) != 1:
                 messagebox.showinfo("Select a series", "Select a single series and use 'Open series' to choose episodes.")
                 return
@@ -1439,7 +1421,10 @@ class IPTVApp(tk.Tk):
     def _queue_series_episodes(self, series: Dict[str, Any], episodes: List[Dict[str, Any]]) -> None:
         download_items: List[DownloadItem] = []
         skipped_duplicates = 0
-        series_name = series.get("name") or f"Series_{series.get('series_id')}"
+        
+        clean_series_name = re.sub(r'^\[(OK|MISS)\]\s*', '', series.get("name") or "")
+        series_name = clean_series_name or f"Series_{series.get('series_id')}"
+        
         series_year = self._normalise_year(
             series.get("display_year"),
             series.get("year"),
@@ -1465,7 +1450,7 @@ class IPTVApp(tk.Tk):
 
             item = DownloadItem(
                 item_id=episode_id,
-                title=f"{series.get('name')} - S{season:02d}E{episode_num:02d} {title}",
+                title=f"{series_name} - S{season:02d}E{episode_num:02d} {title}",
                 stream_url=stream_url,
                 target_path=target_path,
                 kind="episode",
@@ -1648,6 +1633,70 @@ class IPTVApp(tk.Tk):
             return True, catalog_refresh
         self._update_queue_tree_item(queue_id, item)
         return False, False
+
+    # ------------------------------------------------------------------
+    # Seerr Integration (On Demand Search)
+    
+    def _search_in_seerr(self, kind: str) -> None:
+        if not self.client or not getattr(self.client, "seerr", None):
+            messagebox.showwarning("Seerr", "Please configure Seerr credentials first.")
+            return
+
+        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        selection = tree.selection()
+        if not selection:
+            return
+
+        def worker() -> None:
+            media_type = "movie" if kind == "movies" else "tv"
+            items_data = self.items_map.get(kind, {})
+            
+            for iid in selection:
+                item = items_data.get(iid)
+                if not item:
+                    continue
+                
+                tmdb_id = item.get("tmdb_id")
+                original_title = item.get("name", "")
+                
+                # Limpiar si ya le habíamos puesto [OK] o [MISS] antes
+                clean_title = re.sub(r'^\[(OK|MISS)\]\s*', '', original_title)
+                
+                # Buscar en Seerr
+                found = self.client.seerr.check_availability(tmdb_id, media_type, clean_title)
+                
+                prefix = "[OK]" if found else "[MISS]"
+                new_name = f"{prefix} {clean_title}"
+                
+                # Actualizar la interfaz (se debe hacer en el hilo principal)
+                self.after(0, lambda i=iid, n=new_name, f=found: self._update_tree_name(kind, i, n, f))
+
+        # Iniciar la búsqueda en segundo plano
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_tree_name(self, kind: str, iid: str, new_name: str, found: bool) -> None:
+        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        if not tree.exists(iid):
+            return
+            
+        values = list(tree.item(iid, "values"))
+        if not values:
+            return
+            
+        values[0] = new_name
+        tags = list(tree.item(iid, "tags"))
+        
+        # Si lo encuentra, lo pintamos de verde
+        if found and "downloaded_item" not in tags:
+            tags.append("downloaded_item")
+        # Si no lo encuentra, nos aseguramos de quitar el color verde si lo tenía
+        elif not found and "downloaded_item" in tags:
+            tags.remove("downloaded_item")
+            
+        tree.item(iid, values=values, tags=tags)
+        
+        if iid in self.items_map.get(kind, {}):
+            self.items_map[kind][iid]["name"] = new_name
 
 
 def run_app() -> None:
