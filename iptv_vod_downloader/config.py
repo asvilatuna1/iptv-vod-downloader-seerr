@@ -21,9 +21,12 @@ class AppConfig:
     username: str = ""
     password: str = ""
     download_dir: str = str(Path.home() / "Downloads" / "IPTV-VOD")
+    seerr_url: str = ""      # NUEVO: URL de Seerr
+    seerr_api_key: str = ""  # NUEVO: API Key de Seerr
 
     def is_complete(self) -> bool:
         """Return True when the configuration looks usable."""
+        # Seerr es opcional, así que solo obligamos a llenar lo de IPTV
         return all(
             [
                 self.base_url.strip(),
