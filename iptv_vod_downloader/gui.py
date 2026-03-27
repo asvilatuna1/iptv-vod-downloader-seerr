@@ -356,6 +356,7 @@ class IPTVApp(tk.Tk):
 
         self.category_indexes: Dict[str, List[str]] = {"movies": [], "series": []}
         self.items_map: Dict[str, Dict[str, Dict[str, Any]]] = {"movies": {}, "series": {}}
+        self.seerr_items_map: Dict[str, Dict[str, Dict[str, Any]]] = {"movies": {}, "series": {}}
         self.queue_items: Dict[str, Dict[str, Any]] = {}
 
         self._create_widgets()
@@ -465,8 +466,8 @@ class IPTVApp(tk.Tk):
 
         ttk.Label(queue_toolbar, textvariable=self.queue_summary_var, foreground="gray").grid(row=0, column=6, sticky="e")
 
-        columns = ("title", "kind", "status", "progress", "path", "error")
-        self.queue_tree = ttk.Treeview(self.queue_frame, columns=columns, show="headings", selectmode="extended")
+        columns_q = ("title", "kind", "status", "progress", "path", "error")
+        self.queue_tree = ttk.Treeview(self.queue_frame, columns=columns_q, show="headings", selectmode="extended")
         self.queue_tree.heading("title", text="Title")
         self.queue_tree.heading("kind", text="Type")
         self.queue_tree.heading("status", text="Status")
@@ -531,6 +532,7 @@ class IPTVApp(tk.Tk):
         else:
             self.notebook.add(frame, text="TV Series")
 
+        # Sidebar Categories
         sidebar = ttk.Frame(frame)
         sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 10))
         ttk.Label(sidebar, text="Categories").pack(anchor="w", pady=(0, 5))
@@ -542,12 +544,20 @@ class IPTVApp(tk.Tk):
         refresh_button = ttk.Button(sidebar, text="Refresh", command=lambda k=kind: self._reload_items(k))
         refresh_button.pack(fill="x", pady=5)
 
+        # Content Main Split (Left: Original, Right: Seerr)
         content = ttk.Frame(frame)
         content.grid(row=0, column=1, sticky="nsew")
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(2, weight=1)
+        content.columnconfigure(1, weight=1)
+        content.rowconfigure(0, weight=1)
 
-        search_frame = ttk.Frame(content)
+        # ----------------- LEFT PANEL (Original List) -----------------
+        left_panel = ttk.Frame(content)
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        left_panel.columnconfigure(0, weight=1)
+        left_panel.rowconfigure(2, weight=1)
+
+        search_frame = ttk.Frame(left_panel)
         search_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         search_frame.columnconfigure(1, weight=1)
         ttk.Label(search_frame, text="Search").pack(side="left", padx=5)
@@ -559,10 +569,10 @@ class IPTVApp(tk.Tk):
         ttk.Button(search_frame, text="Clear", command=lambda v=search_var, k=kind: self._clear_search(k, v)).pack(side="left", padx=5)
 
         result_status_var = tk.StringVar(value="")
-        ttk.Label(content, textvariable=result_status_var, foreground="gray", anchor="w").grid(row=1, column=0, sticky="ew", pady=(0, 5))
+        ttk.Label(left_panel, textvariable=result_status_var, foreground="gray", anchor="w").grid(row=1, column=0, sticky="ew", pady=(0, 5))
 
         columns = ("title", "year")
-        tree = ttk.Treeview(content, columns=columns, show="headings", selectmode="extended")
+        tree = ttk.Treeview(left_panel, columns=columns, show="headings", selectmode="extended")
         tree.heading("title", text="Title", command=lambda k=kind: self._set_catalog_sort(k, "Title"))
         tree.heading("year", text="Year", command=lambda k=kind: self._set_catalog_sort(k, "Year"))
         tree.column("title", width=420, anchor="w")
@@ -571,35 +581,74 @@ class IPTVApp(tk.Tk):
         tree.tag_configure("queued_item", foreground="#0b5cad")
         tree.tag_configure("downloaded_item", foreground="#2b7a0b")
 
-        scroll_y = ttk.Scrollbar(content, orient="vertical", command=tree.yview)
+        scroll_y = ttk.Scrollbar(left_panel, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll_y.set)
         scroll_y.grid(row=2, column=1, sticky="ns")
 
+        # Left Context Menu
         context_menu = tk.Menu(tree, tearoff=0)
         if is_series:
-            context_menu.add_command(label="Open series", command=self._open_series_dialog)
-            context_menu.add_command(label="Queue full series", command=self._queue_entire_selected_series)
-        context_menu.add_command(label="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k))
-        
-        # NUEVO: Boton en clic derecho
-        context_menu.add_separator()
-        context_menu.add_command(label="Search in Seerr", command=lambda k=kind: self._search_in_seerr(k))
+            context_menu.add_command(label="Open series", command=lambda: self._open_series_dialog(from_seerr=False))
+            context_menu.add_command(label="Queue full series", command=lambda: self._queue_entire_selected_series(from_seerr=False))
+        context_menu.add_command(label="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k, from_seerr=False))
 
         tree.bind("<Button-3>", lambda event, m=context_menu, t=tree: self._show_tree_menu(event, t, m))
         if is_series:
-            tree.bind("<Double-1>", self._on_series_tree_double_click)
-        setattr(self, f"{kind}_menu", context_menu)
+            tree.bind("<Double-1>", lambda e: self._on_series_tree_double_click(e, from_seerr=False))
 
-        action_frame = ttk.Frame(content)
+        # Left Action Frame
+        action_frame = ttk.Frame(left_panel)
         action_frame.grid(row=3, column=0, sticky="ew", pady=5)
-
         if is_series:
-            ttk.Button(action_frame, text="Open series", command=self._open_series_dialog).pack(side="left", padx=5)
-            ttk.Button(action_frame, text="Queue full series", command=self._queue_entire_selected_series).pack(side="left", padx=5)
-        ttk.Button(action_frame, text="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k)).pack(side="right", padx=5)
+            ttk.Button(action_frame, text="Open series", command=lambda: self._open_series_dialog(from_seerr=False)).pack(side="left", padx=5)
+            ttk.Button(action_frame, text="Queue full series", command=lambda: self._queue_entire_selected_series(from_seerr=False)).pack(side="left", padx=5)
+        ttk.Button(action_frame, text="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k, from_seerr=False)).pack(side="right", padx=5)
 
+        # ----------------- RIGHT PANEL (Seerr MISS List) -----------------
+        right_panel = ttk.Frame(content)
+        right_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        right_panel.columnconfigure(0, weight=1)
+        right_panel.rowconfigure(1, weight=1)
+
+        ttk.Label(right_panel, text="Seerr MISS Results", font=("TkDefaultFont", 9, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 5))
+
+        seerr_tree = ttk.Treeview(right_panel, columns=columns, show="headings", selectmode="extended")
+        seerr_tree.heading("title", text="Title")
+        seerr_tree.heading("year", text="Year")
+        seerr_tree.column("title", width=420, anchor="w")
+        seerr_tree.column("year", width=120, anchor="center")
+        seerr_tree.grid(row=1, column=0, sticky="nsew")
+
+        seerr_scroll_y = ttk.Scrollbar(right_panel, orient="vertical", command=seerr_tree.yview)
+        seerr_tree.configure(yscrollcommand=seerr_scroll_y.set)
+        seerr_scroll_y.grid(row=1, column=1, sticky="ns")
+
+        # Right Context Menu
+        seerr_context_menu = tk.Menu(seerr_tree, tearoff=0)
+        if is_series:
+            seerr_context_menu.add_command(label="Open series", command=lambda: self._open_series_dialog(from_seerr=True))
+            seerr_context_menu.add_command(label="Queue full series", command=lambda: self._queue_entire_selected_series(from_seerr=True))
+        seerr_context_menu.add_command(label="Queue selected items", command=lambda k=kind: self._add_selected_to_queue(k, from_seerr=True))
+        
+        seerr_tree.bind("<Button-3>", lambda event, m=seerr_context_menu, t=seerr_tree: self._show_tree_menu(event, t, m))
+        if is_series:
+            seerr_tree.bind("<Double-1>", lambda e: self._on_series_tree_double_click(e, from_seerr=True))
+
+        # Right Action Frame
+        seerr_action_frame = ttk.Frame(right_panel)
+        seerr_action_frame.grid(row=2, column=0, sticky="ew", pady=5)
+        
+        ttk.Button(seerr_action_frame, text="Search Seerr", command=lambda k=kind: self._bulk_search_seerr(k)).pack(side="left", padx=5)
+        
+        if is_series:
+            ttk.Button(seerr_action_frame, text="Open series", command=lambda: self._open_series_dialog(from_seerr=True)).pack(side="left", padx=5)
+            
+        ttk.Button(seerr_action_frame, text="Queue selected", command=lambda k=kind: self._add_selected_to_queue(k, from_seerr=True)).pack(side="right", padx=5)
+
+        # Set attributes
         setattr(self, f"{kind}_listbox", listbox)
         setattr(self, f"{kind}_tree", tree)
+        setattr(self, f"{kind}_seerr_tree", seerr_tree)
         setattr(self, f"{kind}_search_var", search_var)
         setattr(self, f"{kind}_results_var", result_status_var)
         setattr(self, f"{kind}_sort_mode", "Title")
@@ -850,11 +899,13 @@ class IPTVApp(tk.Tk):
         finally:
             menu.grab_release()
 
-    def _on_series_tree_double_click(self, event: tk.Event) -> None:
-        if self.series_tree.identify_region(event.x, event.y) != "cell":
+    def _on_series_tree_double_click(self, event: tk.Event, from_seerr: bool = False) -> None:
+        tree_attr = "series_seerr_tree" if from_seerr else "series_tree"
+        tree: ttk.Treeview = getattr(self, tree_attr)
+        if tree.identify_region(event.x, event.y) != "cell":
             return
-        if self.series_tree.identify_row(event.y):
-            self._open_series_dialog()
+        if tree.identify_row(event.y):
+            self._open_series_dialog(from_seerr)
 
     def _show_queue_menu(self, event: tk.Event) -> None:
         iid = self.queue_tree.identify_row(event.y)
@@ -873,8 +924,15 @@ class IPTVApp(tk.Tk):
     def _load_items(self, kind: str, category_id: str, search_term: Optional[str] = None) -> None:
         if not self.client:
             return
+            
+        # Limpiar ambas listas al cambiar de categoría
         tree: ttk.Treeview = getattr(self, f"{kind}_tree")
         tree.delete(*tree.get_children())
+        
+        seerr_tree: ttk.Treeview = getattr(self, f"{kind}_seerr_tree")
+        seerr_tree.delete(*seerr_tree.get_children())
+        self.seerr_items_map[kind].clear()
+        
         results_var: tk.StringVar = getattr(self, f"{kind}_results_var")
         results_var.set("Loading results...")
         self._items_request_tokens[kind] += 1
@@ -1039,20 +1097,25 @@ class IPTVApp(tk.Tk):
             return str(year)
         return ""
 
-    def _update_tree_year(self, kind: str, identifier: str, year: str) -> None:
+    def _update_tree_year(self, kind: str, identifier: str, year: str, is_seerr: bool = False) -> None:
         if not year:
             return
-        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        tree_attr = f"{kind}_seerr_tree" if is_seerr else f"{kind}_tree"
+        tree: ttk.Treeview = getattr(self, tree_attr)
+        
         if not tree.exists(identifier):
             return
+            
         values = list(tree.item(identifier, "values"))
         if len(values) < 2:
             return
         values[1] = year
         tree.item(identifier, values=values)
-        if identifier in self.items_map.get(kind, {}):
-            self.items_map[kind][identifier]["display_year"] = year
-            self.items_map[kind][identifier]["year"] = year
+        
+        target_map = self.seerr_items_map if is_seerr else self.items_map
+        if identifier in target_map.get(kind, {}):
+            target_map[kind][identifier]["display_year"] = year
+            target_map[kind][identifier]["year"] = year
 
     def _catalog_item_tags(self, kind: str, item: Dict[str, Any]) -> tuple[str, ...]:
         tags: List[str] = []
@@ -1255,18 +1318,19 @@ class IPTVApp(tk.Tk):
 
     def _on_return_pressed(self, _event: tk.Event) -> str | None:
         focus = self.focus_get()
-        if focus == self.series_tree:
-            self._open_series_dialog()
+        if focus in {self.series_tree, self.series_seerr_tree}:
+            from_seerr = focus == self.series_seerr_tree
+            self._open_series_dialog(from_seerr=from_seerr)
             return "break"
-        if focus in {self.movies_tree, self.series_tree}:
-            current_tab = "movies" if focus == self.movies_tree else "series"
-            self._add_selected_to_queue(current_tab)
+        if focus in {self.movies_tree, self.movies_seerr_tree}:
+            from_seerr = focus == self.movies_seerr_tree
+            self._add_selected_to_queue("movies", from_seerr=from_seerr)
             return "break"
         return None
 
     def _on_select_all_pressed(self, _event: tk.Event) -> str | None:
         focus = self.focus_get()
-        if focus in {self.movies_tree, self.series_tree, self.queue_tree}:
+        if focus in {self.movies_tree, self.series_tree, self.queue_tree, self.movies_seerr_tree, self.series_seerr_tree}:
             focus.selection_set(*focus.get_children())
             return "break"
         return None
@@ -1274,18 +1338,20 @@ class IPTVApp(tk.Tk):
     # ------------------------------------------------------------------
     # Queue handling
 
-    def _add_selected_to_queue(self, kind: str) -> None:
+    def _add_selected_to_queue(self, kind: str, from_seerr: bool = False) -> None:
         if not self.client or not self.current_config.is_complete():
             messagebox.showwarning("Configuration", "Configure the IPTV connection before queuing downloads.")
             return
 
-        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
+        tree_attr = f"{kind}_seerr_tree" if from_seerr else f"{kind}_tree"
+        tree: ttk.Treeview = getattr(self, tree_attr)
         selection = tree.selection()
+        
         if not selection:
             messagebox.showinfo("No selection", "Select at least one item to download.")
             return
 
-        items_data = self.items_map.get(kind, {})
+        items_data = self.seerr_items_map.get(kind, {}) if from_seerr else self.items_map.get(kind, {})
         download_items: List[DownloadItem] = []
         skipped_duplicates = 0
 
@@ -1303,7 +1369,6 @@ class IPTVApp(tk.Tk):
                 meta_info = info.get("info", {}) if isinstance(info.get("info"), dict) else {}
                 extension = meta_info.get("container_extension") or stream.get("container_extension") or "mp4"
                 
-                # Respetamos el nombre limpio si le hicimos la busqueda de Seerr
                 clean_title = re.sub(r'^\[(OK|MISS)\]\s*', '', stream.get("name") or "")
                 title = clean_title or f"Movie {stream['stream_id']}"
                 
@@ -1320,7 +1385,7 @@ class IPTVApp(tk.Tk):
                 if year_value:
                     safe_title = f"{safe_title} ({year_value})"
                     stream["display_year"] = year_value
-                    self._update_tree_year("movies", iid, year_value)
+                    self._update_tree_year("movies", iid, year_value, is_seerr=from_seerr)
 
                 target_dir = Path(self.current_config.download_dir) / "Movies"
                 target_path = target_dir / f"{safe_title}.{extension}"
@@ -1350,16 +1415,19 @@ class IPTVApp(tk.Tk):
             if len(selection) != 1:
                 messagebox.showinfo("Select a series", "Select a single series and use 'Open series' to choose episodes.")
                 return
-            self._open_series_dialog()
+            self._open_series_dialog(from_seerr=from_seerr)
 
-    def _open_series_dialog(self) -> None:
-        tree: ttk.Treeview = self.series_tree
+    def _open_series_dialog(self, from_seerr: bool = False) -> None:
+        tree_attr = "series_seerr_tree" if from_seerr else "series_tree"
+        tree: ttk.Treeview = getattr(self, tree_attr)
         selection = tree.selection()
         if not selection:
             messagebox.showinfo("No series selected", "Select a series to browse its episodes.")
             return
         series_id = selection[0]
-        series = self.items_map["series"].get(series_id)
+        
+        target_map = self.seerr_items_map if from_seerr else self.items_map
+        series = target_map["series"].get(series_id)
         if not series:
             return
 
@@ -1368,19 +1436,21 @@ class IPTVApp(tk.Tk):
 
         SeriesEpisodesDialog(self, self.client, series, callback)
 
-    def _queue_entire_selected_series(self) -> None:
+    def _queue_entire_selected_series(self, from_seerr: bool = False) -> None:
         if not self.client or not self.current_config.is_complete():
             messagebox.showwarning("Configuration", "Configure the IPTV connection before queuing downloads.")
             return
 
-        tree: ttk.Treeview = self.series_tree
+        tree_attr = "series_seerr_tree" if from_seerr else "series_tree"
+        tree: ttk.Treeview = getattr(self, tree_attr)
         selection = tree.selection()
         if len(selection) != 1:
             messagebox.showinfo("Select a series", "Select a single series to queue the full series.")
             return
 
         series_id = selection[0]
-        series = self.items_map["series"].get(series_id)
+        target_map = self.seerr_items_map if from_seerr else self.items_map
+        series = target_map["series"].get(series_id)
         if not series:
             return
 
@@ -1637,66 +1707,52 @@ class IPTVApp(tk.Tk):
     # ------------------------------------------------------------------
     # Seerr Integration (On Demand Search)
     
-    def _search_in_seerr(self, kind: str) -> None:
+    def _bulk_search_seerr(self, kind: str) -> None:
         if not self.client or not getattr(self.client, "seerr", None):
             messagebox.showwarning("Seerr", "Please configure Seerr credentials first.")
             return
 
-        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
-        selection = tree.selection()
-        if not selection:
-            return
+        tree_left: ttk.Treeview = getattr(self, f"{kind}_tree")
+        tree_right: ttk.Treeview = getattr(self, f"{kind}_seerr_tree")
+        
+        # Limpiar panel derecho antes de empezar
+        tree_right.delete(*tree_right.get_children())
+        self.seerr_items_map[kind].clear()
+
+        # Obtener todos los items actualmente visibles en el árbol izquierdo
+        visible_iids = tree_left.get_children()
+        items_data = self.items_map.get(kind, {})
+        media_type = "movie" if kind == "movies" else "tv"
+        
+        self.status_var.set(f"Searching {len(visible_iids)} items in Seerr...")
 
         def worker() -> None:
-            media_type = "movie" if kind == "movies" else "tv"
-            items_data = self.items_map.get(kind, {})
-            
-            for iid in selection:
+            for iid in visible_iids:
                 item = items_data.get(iid)
                 if not item:
                     continue
-                
+                    
                 tmdb_id = item.get("tmdb_id")
                 original_title = item.get("name", "")
                 
-                # Limpiar si ya le habíamos puesto [OK] o [MISS] antes
+                # Limpiar [OK] / [MISS] en caso de que vinieran del servidor con esos tags
                 clean_title = re.sub(r'^\[(OK|MISS)\]\s*', '', original_title)
                 
-                # Buscar en Seerr
-                found = self.client.seerr.check_availability(tmdb_id, media_type, clean_title)
+                try:
+                    found = self.client.seerr.check_availability(tmdb_id, media_type, clean_title)
+                except Exception:
+                    found = False  # Por defecto asumimos MISS si hay fallo en un item
                 
-                prefix = "[OK]" if found else "[MISS]"
-                new_name = f"{prefix} {clean_title}"
-                
-                # Actualizar la interfaz (se debe hacer en el hilo principal)
-                self.after(0, lambda i=iid, n=new_name, f=found: self._update_tree_name(kind, i, n, f))
+                if not found:
+                    self.seerr_items_map[kind][iid] = item
+                    display_year = item.get("display_year", "")
+                    
+                    self.after(0, lambda i=iid, t=clean_title, y=display_year: 
+                               tree_right.insert("", "end", iid=i, values=(t, y)))
+            
+            self.after(0, lambda: self.status_var.set("Seerr search completed."))
 
-        # Iniciar la búsqueda en segundo plano
         threading.Thread(target=worker, daemon=True).start()
-
-    def _update_tree_name(self, kind: str, iid: str, new_name: str, found: bool) -> None:
-        tree: ttk.Treeview = getattr(self, f"{kind}_tree")
-        if not tree.exists(iid):
-            return
-            
-        values = list(tree.item(iid, "values"))
-        if not values:
-            return
-            
-        values[0] = new_name
-        tags = list(tree.item(iid, "tags"))
-        
-        # Si lo encuentra, lo pintamos de verde
-        if found and "downloaded_item" not in tags:
-            tags.append("downloaded_item")
-        # Si no lo encuentra, nos aseguramos de quitar el color verde si lo tenía
-        elif not found and "downloaded_item" in tags:
-            tags.remove("downloaded_item")
-            
-        tree.item(iid, values=values, tags=tags)
-        
-        if iid in self.items_map.get(kind, {}):
-            self.items_map[kind][iid]["name"] = new_name
 
 
 def run_app() -> None:
